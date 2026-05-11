@@ -116,18 +116,18 @@
   .search-filter:focus{border-color:var(--purple)}
 
   /* Table */
-  .table-wrap{overflow-y:auto;max-height:480px;border-radius:10px;border:1px solid var(--border)}
-  .table-wrap::-webkit-scrollbar{width:4px}
+  .table-wrap{overflow-y:auto;overflow-x:auto;max-height:480px;border-radius:10px;border:1px solid var(--border)}
+  .table-wrap::-webkit-scrollbar{width:4px;height:4px}
   .table-wrap::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
-  table{width:100%;border-collapse:collapse;font-size:13px}
+  table{width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed}
   thead{position:sticky;top:0;z-index:2}
   th{background:#0d1120;padding:10px 14px;text-align:left;
     font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;
     border-bottom:1px solid var(--border)}
-  td{padding:10px 14px;border-bottom:1px solid rgba(30,41,59,0.5)}
+  td{padding:10px 14px;border-bottom:1px solid rgba(30,41,59,0.5);word-wrap:break-word;overflow-wrap:break-word}
   tr:last-child td{border-bottom:none}
   tr:hover td{background:rgba(124,58,237,0.05)}
-  .email-chip{color:var(--purple2);font-weight:500}
+  .email-chip{color:var(--purple2);font-weight:500;word-break:break-all}
   .source-badge{display:inline-block;padding:2px 8px;border-radius:100px;
     font-size:10px;font-weight:600;text-transform:uppercase}
   .source-github{background:rgba(255,255,255,0.08);color:#ccc}
@@ -254,10 +254,10 @@
         <table>
           <thead>
             <tr>
-              <th>#</th>
-              <th>Email Address</th>
-              <th>Name</th>
-              <th>Source</th>
+              <th style="width:40px">#</th>
+              <th style="width:35%">Email Address</th>
+              <th style="width:25%">Name</th>
+              <th style="width:15%">Source</th>
               <th>Platform</th>
             </tr>
           </thead>
