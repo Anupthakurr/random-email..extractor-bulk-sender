@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Student Email Extractor — AI Tool</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{
+    --bg:#080b14;--card:#0d1120;--card2:#111827;
+    --purple:#7c3aed;--purple2:#9f67ff;--blue:#3b82f6;
+    --green:#10b981;--red:#ef4444;--yellow:#f59e0b;
+    --text:#e2e8f0;--muted:#64748b;--border:#1e293b;
+  }
+  body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+
+  /* Animated background */
+  body::before{
+    content:'';position:fixed;top:0;left:0;width:100%;height:100%;
+    background:radial-gradient(ellipse at 20% 20%,rgba(124,58,237,0.12) 0%,transparent 50%),
+               radial-gradient(ellipse at 80% 80%,rgba(59,130,246,0.1) 0%,transparent 50%);
+    pointer-events:none;z-index:0;
+  }
+
+  .wrapper{position:relative;z-index:1;max-width:1200px;margin:0 auto;padding:24px 20px}
+
+  /* Header */
+  header{text-align:center;padding:40px 0 32px}
+  .badge{display:inline-flex;align-items:center;gap:6px;background:rgba(124,58,237,0.15);
+    border:1px solid rgba(124,58,237,0.3);border-radius:100px;
+    padding:4px 16px;font-size:12px;color:var(--purple2);margin-bottom:20px;letter-spacing:0.5px}
+  .badge span{width:6px;height:6px;border-radius:50%;background:var(--purple2);animation:pulse 1.5s infinite}
+  h1{font-size:clamp(28px,5vw,48px);font-weight:800;letter-spacing:-1px;
+    background:linear-gradient(135deg,#fff 0%,var(--purple2) 50%,var(--blue) 100%);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  .subtitle{margin-top:10px;color:var(--muted);font-size:15px}
+
+  /* Stats bar */
+  .stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
+  .stat-card{background:var(--card);border:1px solid var(--border);border-radius:14px;
+    padding:16px;text-align:center;transition:transform .2s}
+  .stat-card:hover{transform:translateY(-2px)}
+  .stat-num{font-size:28px;font-weight:800;color:var(--purple2)}
+  .stat-label{font-size:11px;color:var(--muted);margin-top:2px;text-transform:uppercase;letter-spacing:0.5px}
+
+  /* Main grid */
+  .grid{display:grid;grid-template-columns:380px 1fr;gap:20px;align-items:start}
+
+  /* Card */
+  .card{background:var(--card);border:1px solid var(--border);border-radius:18px;padding:24px}
+  .card-title{font-size:13px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:18px}
+
+  /* Form */
+  label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px;margin-top:14px}
+  input[type=text],input[type=number]{
+    width:100%;background:#0a0f1e;border:1px solid var(--border);
+    border-radius:10px;padding:12px 14px;color:var(--text);font-size:14px;
+    font-family:'Inter',sans-serif;transition:border .2s,box-shadow .2s;outline:none}
+  input:focus{border-color:var(--purple);box-shadow:0 0 0 3px rgba(124,58,237,0.15)}
+
+  /* Source toggles */
+  .sources{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px}
+  .source-toggle{position:relative}
+  .source-toggle input{position:absolute;opacity:0;width:0;height:0}
+  .source-toggle label{
+    display:flex;align-items:center;gap:10px;
+    background:#0a0f1e;border:1px solid var(--border);
+    border-radius:10px;padding:10px 14px;cursor:pointer;
+    font-size:13px;color:var(--muted);transition:all .2s;margin:0}
+  .source-toggle input:checked+label{
+    border-color:var(--purple);color:var(--text);
+    background:rgba(124,58,237,0.1)}
+  .source-icon{font-size:18px}
+
+  /* Buttons */
+  .btn{width:100%;padding:14px;border:none;border-radius:12px;
+    font-size:15px;font-weight:600;cursor:pointer;transition:all .2s;margin-top:16px;
+    font-family:'Inter',sans-serif}
+  .btn-primary{background:linear-gradient(135deg,var(--purple),var(--blue));color:#fff}
+  .btn-primary:hover{opacity:0.9;transform:translateY(-1px);box-shadow:0 8px 25px rgba(124,58,237,0.4)}
+  .btn-primary:disabled{opacity:0.5;cursor:not-allowed;transform:none}
+  .btn-stop{background:rgba(239,68,68,0.15);color:var(--red);border:1px solid rgba(239,68,68,0.3)}
+  .btn-stop:hover{background:rgba(239,68,68,0.25)}
+  .btn-export{background:rgba(16,185,129,0.15);color:var(--green);border:1px solid rgba(16,185,129,0.3);width:auto;padding:10px 20px;margin-top:0}
+  .btn-export:hover{background:rgba(16,185,129,0.25)}
+
+  /* Progress */
+  .progress-wrap{margin-top:16px;display:none}
+  .progress-wrap.active{display:block}
+  .progress-label{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:6px}
+  .progress-bar{height:6px;background:var(--border);border-radius:100px;overflow:hidden}
+  .progress-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--purple),var(--blue));
+    border-radius:100px;transition:width .5s ease}
+
+  /* Log */
+  .log-box{background:#060a12;border:1px solid var(--border);border-radius:10px;
+    height:160px;overflow-y:auto;padding:10px 12px;margin-top:14px;font-size:12px;
+    font-family:'Courier New',monospace;line-height:1.8}
+  .log-box::-webkit-scrollbar{width:4px}
+  .log-box::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+  .log-line{color:#64748b}
+  .log-line.success{color:#10b981}
+  .log-line.error{color:#ef4444}
+  .log-line.info{color:#7c3aed}
+
+  /* Results */
+  .results-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+  .results-count{font-size:13px;color:var(--muted)}
+  .results-count span{color:var(--purple2);font-weight:700;font-size:16px}
+
+  .search-filter{
+    width:100%;background:#0a0f1e;border:1px solid var(--border);
+    border-radius:8px;padding:9px 12px;color:var(--text);font-size:13px;
+    outline:none;margin-bottom:14px;font-family:'Inter',sans-serif}
+  .search-filter:focus{border-color:var(--purple)}
+
+  /* Table */
+  .table-wrap{overflow-y:auto;max-height:480px;border-radius:10px;border:1px solid var(--border)}
+  .table-wrap::-webkit-scrollbar{width:4px}
+  .table-wrap::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  thead{position:sticky;top:0;z-index:2}
+  th{background:#0d1120;padding:10px 14px;text-align:left;
+    font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;
+    border-bottom:1px solid var(--border)}
+  td{padding:10px 14px;border-bottom:1px solid rgba(30,41,59,0.5)}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:rgba(124,58,237,0.05)}
+  .email-chip{color:var(--purple2);font-weight:500}
+  .source-badge{display:inline-block;padding:2px 8px;border-radius:100px;
+    font-size:10px;font-weight:600;text-transform:uppercase}
+  .source-github{background:rgba(255,255,255,0.08);color:#ccc}
+  .source-google{background:rgba(59,130,246,0.15);color:#60a5fa}
+  .source-bing{background:rgba(16,185,129,0.15);color:#34d399}
+  .source-devfolio{background:rgba(245,158,11,0.15);color:#fbbf24}
+
+  .empty-state{text-align:center;padding:60px 20px;color:var(--muted)}
+  .empty-icon{font-size:48px;margin-bottom:12px}
+
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .spin{animation:spin 1s linear infinite;display:inline-block}
+
+  @media(max-width:768px){
+    .grid{grid-template-columns:1fr}
+    .stats-bar{grid-template-columns:repeat(2,1fr)}
+  }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <!-- Header -->
+  <header>
+    <div class="badge"><span></span>AI Powered Tool</div>
+    <h1>Student Email Extractor</h1>
+    <p class="subtitle">Automatically find student emails from GitHub, Google, Bing & Devfolio</p>
+  </header>
+
+  <!-- Stats Bar -->
+  <div class="stats-bar">
+    <div class="stat-card">
+      <div class="stat-num" id="totalCount">0</div>
+      <div class="stat-label">Total Emails</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="githubCount" style="color:#a78bfa">0</div>
+      <div class="stat-label">From GitHub</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="googleCount" style="color:#60a5fa">0</div>
+      <div class="stat-label">From Google</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="bingCount" style="color:#34d399">0</div>
+      <div class="stat-label">From Bing</div>
+    </div>
+  </div>
+
+  <div class="grid">
+
+    <!-- Left Panel: Controls -->
+    <div>
+      <div class="card">
+        <div class="card-title">🔍 Search Settings</div>
+
+        <label>Keyword / Niche</label>
+        <input type="text" id="keyword" placeholder="e.g. Python, Data Science, IIT, JEE..." value="computer science student India"/>
+
+        <label>Max Results</label>
+        <input type="number" id="maxResults" value="500" min="10" max="5000"/>
+
+        <label>Sources to Search</label>
+        <div class="sources">
+          <div class="source-toggle">
+            <input type="checkbox" id="srcGithub" checked/>
+            <label for="srcGithub"><span class="source-icon">🐙</span>GitHub</label>
+          </div>
+          <div class="source-toggle">
+            <input type="checkbox" id="srcGoogle" checked/>
+            <label for="srcGoogle"><span class="source-icon">🔎</span>Google</label>
+          </div>
+          <div class="source-toggle">
+            <input type="checkbox" id="srcBing" checked/>
+            <label for="srcBing"><span class="source-icon">🅱️</span>Bing</label>
+          </div>
+          <div class="source-toggle">
+            <input type="checkbox" id="srcDevfolio"/>
+            <label for="srcDevfolio"><span class="source-icon">🚀</span>Devfolio</label>
+          </div>
+        </div>
+
+        <button class="btn btn-primary" id="startBtn" onclick="startSearch()">
+          🚀 Start Extracting Emails
+        </button>
+        <button class="btn btn-stop" id="stopBtn" onclick="stopSearch()" style="display:none">
+          🛑 Stop Search
+        </button>
+
+        <!-- Progress -->
+        <div class="progress-wrap" id="progressWrap">
+          <div class="progress-label">
+            <span id="progressText">Searching...</span>
+            <span id="progressPct">0%</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        </div>
+
+        <!-- Log -->
+        <div class="card-title" style="margin-top:20px;margin-bottom:8px">📋 Live Log</div>
+        <div class="log-box" id="logBox">
+          <div class="log-line info">⚡ Ready to extract emails. Configure settings and click Start.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Panel: Results -->
+    <div class="card">
+      <div class="results-header">
+        <div>
+          <div class="card-title" style="margin-bottom:4px">📧 Extracted Emails</div>
+          <div class="results-count">Found <span id="foundCount">0</span> unique emails</div>
+        </div>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-export" onclick="copyAll()">📋 Copy All</button>
+          <button class="btn btn-export" onclick="exportCSV()">⬇️ Export CSV</button>
+        </div>
+      </div>
+
+      <input class="search-filter" type="text" placeholder="🔍 Filter emails..." id="filterInput" oninput="filterEmails()"/>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Email Address</th>
+              <th>Name</th>
+              <th>Source</th>
+              <th>Platform</th>
+            </tr>
+          </thead>
+          <tbody id="emailTable">
+            <tr><td colspan="5">
+              <div class="empty-state">
+                <div class="empty-icon">📭</div>
+                <div>No emails yet. Start a search!</div>
+              </div>
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let allEmails = [];
+let polling = null;
+
+async function startSearch() {
+  const keyword = document.getElementById('keyword').value.trim();
+  if (!keyword) { alert('Please enter a keyword!'); return; }
+
+  const sources = [];
+  if (document.getElementById('srcGithub').checked) sources.push('github');
+  if (document.getElementById('srcGoogle').checked) sources.push('google');
+  if (document.getElementById('srcBing').checked) sources.push('bing');
+  if (document.getElementById('srcDevfolio').checked) sources.push('devfolio');
+  if (!sources.length) { alert('Select at least one source!'); return; }
+
+  const maxResults = parseInt(document.getElementById('maxResults').value) || 500;
+
+  try {
+    const resp = await fetch('/api/search/start', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ keyword, sources, max_results: maxResults })
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      document.getElementById('startBtn').disabled = true;
+      document.getElementById('startBtn').innerHTML = '<span class="spin">⚙️</span> Extracting...';
+      document.getElementById('stopBtn').style.display = 'block';
+      document.getElementById('progressWrap').classList.add('active');
+      clearLog();
+      appendLog('🚀 Search started!', 'info');
+      polling = setInterval(pollStatus, 2000);
+    } else {
+      alert(data.detail || 'Error starting search');
+    }
+  } catch(e) {
+    alert('Cannot connect to server. Make sure server.py is running!');
+  }
+}
+
+async function stopSearch() {
+  await fetch('/api/search/stop', { method: 'POST' });
+  clearInterval(polling);
+  resetButtons();
+}
+
+async function pollStatus() {
+  try {
+    const resp = await fetch('/api/search/status');
+    const data = await resp.json();
+
+    // Update stats
+    document.getElementById('totalCount').textContent = data.count;
+    document.getElementById('githubCount').textContent = data.stats.github || 0;
+    document.getElementById('googleCount').textContent = data.stats.google || 0;
+    document.getElementById('bingCount').textContent = data.stats.bing || 0;
+    document.getElementById('foundCount').textContent = data.count;
+
+    // Progress
+    const pct = data.progress || 0;
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressPct').textContent = pct + '%';
+
+    // Logs
+    if (data.log && data.log.length) {
+      data.log.forEach(line => appendLog(line));
+    }
+
+    // Update table
+    if (data.emails) {
+      allEmails = data.emails;
+      renderTable(allEmails);
+    }
+
+    if (!data.running) {
+      clearInterval(polling);
+      resetButtons();
+      document.getElementById('progressText').textContent = '✅ Done!';
+      appendLog(`✅ Finished! ${data.count} emails found.`, 'success');
+    }
+  } catch(e) {
+    appendLog('⚠️ Lost connection to server...', 'error');
+  }
+}
+
+function renderTable(emails) {
+  const tbody = document.getElementById('emailTable');
+  if (!emails.length) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">📭</div><div>No emails yet. Start a search!</div></div></td></tr>`;
+    return;
+  }
+  const filter = document.getElementById('filterInput').value.toLowerCase();
+  const filtered = filter ? emails.filter(e => e.email.includes(filter) || (e.name||'').toLowerCase().includes(filter)) : emails;
+
+  tbody.innerHTML = filtered.map((e, i) => `
+    <tr>
+      <td style="color:var(--muted)">${i+1}</td>
+      <td><span class="email-chip">${e.email}</span></td>
+      <td style="color:var(--muted)">${e.name || '—'}</td>
+      <td><span class="source-badge source-${e.source}">${e.source}</span></td>
+      <td style="color:var(--muted);font-size:11px">${e.platform || '—'}</td>
+    </tr>`).join('');
+}
+
+function filterEmails() {
+  renderTable(allEmails);
+}
+
+let loggedLines = new Set();
+function appendLog(msg, type='log') {
+  if (loggedLines.has(msg)) return;
+  loggedLines.add(msg);
+  if (loggedLines.size > 200) loggedLines.clear();
+
+  const box = document.getElementById('logBox');
+  const cls = msg.includes('✅') ? 'success' : msg.includes('❌') ? 'error' : msg.includes('🚀')||msg.includes('ℹ') ? 'info' : 'log';
+  const div = document.createElement('div');
+  div.className = `log-line ${type || cls}`;
+  div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('logBox').innerHTML = '';
+  loggedLines.clear();
+}
+
+function resetButtons() {
+  document.getElementById('startBtn').disabled = false;
+  document.getElementById('startBtn').innerHTML = '🚀 Start Extracting Emails';
+  document.getElementById('stopBtn').style.display = 'none';
+}
+
+function exportCSV() {
+  if (!allEmails.length) { alert('No emails to export!'); return; }
+  const csv = 'Email,Name,Source,Platform\n' +
+    allEmails.map(e => `${e.email},"${e.name||''}",${e.source},"${e.platform||''}"`).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url;
+  a.download=`student_emails_${Date.now()}.csv`; a.click();
+}
+
+function copyAll() {
+  if (!allEmails.length) { alert('No emails to copy!'); return; }
+  const text = allEmails.map(e=>e.email).join('\n');
+  navigator.clipboard.writeText(text).then(()=>alert(`✅ Copied ${allEmails.length} emails to clipboard!`));
+}
+</script>
+</body>
+</html>

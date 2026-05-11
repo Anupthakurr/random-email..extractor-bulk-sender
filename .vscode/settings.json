@@ -1,0 +1,7 @@
+{
+  "python.defaultInterpreterPath": "C:\\Users\\tanup\\AppData\\Local\\Programs\\Python\\Python39\\python.exe",
+  "python.analysis.typeCheckingMode": "off",
+  "python.analysis.diagnosticMode": "off",
+  "python.linting.enabled": false,
+  "python.analysis.ignore": ["**"]
+}
