@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>App Password Guide — Email Extractor</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --bg: #030712;
+    --card: rgba(17, 24, 39, 0.7);
+    --border: rgba(255, 255, 255, 0.1);
+    --text: #f9fafb;
+    --muted: #9ca3af;
+    --blue: #3b82f6;
+    --purple: #8b5cf6;
+  }
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    margin: 0;
+    display: flex;
+    justify-content: center;
+    padding: 40px 20px;
+  }
+  /* Animated background */
+  body::before{
+    content:'';position:fixed;top:0;left:0;width:100%;height:100%;
+    background:radial-gradient(ellipse at 20% 20%,rgba(124,58,237,0.12) 0%,transparent 50%),
+               radial-gradient(ellipse at 80% 80%,rgba(59,130,246,0.1) 0%,transparent 50%);
+    pointer-events:none;z-index:-1;
+  }
+  .container {
+    max-width: 800px;
+    width: 100%;
+    background: var(--card);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 40px;
+    box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);
+  }
+  h1 { margin-top: 0; color: var(--purple); font-size: 28px; }
+  h2 { margin-top: 32px; border-bottom: 1px solid var(--border); padding-bottom: 8px; font-size: 20px; }
+  p, li { line-height: 1.7; color: #d1d5db; font-size: 15px; }
+  ol { padding-left: 20px; }
+  li { margin-bottom: 12px; }
+  .box {
+    background: rgba(0,0,0,0.3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 20px 0;
+    font-family: monospace;
+    color: var(--blue);
+  }
+  a.btn {
+    display: inline-block;
+    background: linear-gradient(135deg, var(--blue), var(--purple));
+    color: white;
+    text-decoration: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-weight: 500;
+    margin-top: 20px;
+    transition: opacity 0.2s;
+  }
+  a.btn:hover { opacity: 0.9; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>How to Get a Google App Password</h1>
+  <p>Google no longer allows automated tools to sign in using your regular email password. Instead, you must generate a special 16-digit "App Password" to securely send bulk emails.</p>
+
+  <h2>Step 1: Turn on 2-Step Verification</h2>
+  <p>You cannot create an App Password unless 2-Step Verification is enabled on your Google account.</p>
+  <ol>
+    <li>Go to your <a href="https://myaccount.google.com/security" target="_blank" style="color:var(--blue)">Google Account Security settings</a>.</li>
+    <li>Scroll down to "How you sign in to Google".</li>
+    <li>Ensure <strong>2-Step Verification</strong> is turned ON.</li>
+  </ol>
+
+  <h2>Step 2: Generate the App Password</h2>
+  <ol>
+    <li>Go directly to the <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--blue)">App Passwords page</a>.</li>
+    <li>Google will ask you for a name. Type something like <em>"Bulk Mailer App"</em> and click <strong>Create</strong>.</li>
+    <li>Google will display a yellow box containing a 16-letter passcode.</li>
+    <li><strong>Copy that passcode exactly.</strong> Do not include any spaces.</li>
+  </ol>
+
+  <h2>Step 3: Enter it in the Dashboard</h2>
+  <p>Go back to the Bulk Mailer dashboard. In the "Sender Accounts" box, paste your email, a colon, and the 16-digit password like this:</p>
+  <div class="box">
+    your.email@gmail.com:abcdefghijklmnop
+  </div>
+  
+  <a href="/" class="btn">← Back to Dashboard</a>
+</div>
+
+</body>
+</html>

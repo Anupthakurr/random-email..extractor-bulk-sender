@@ -349,7 +349,13 @@
             <input type="number" id="smtpPort" value="587" style="width:100px" />
           </div>
           
-          <label>Sender Accounts (Email : App Password)</label>
+          <label style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+            <span>Sender Accounts (Email : App Password)</span>
+            <span style="display:flex;gap:12px">
+              <a href="https://myaccount.google.com/apppasswords" target="_blank" style="font-size:11px;color:var(--blue);text-decoration:none;font-weight:normal">Get App Password ↗</a>
+              <a href="/guide.html" target="_blank" style="font-size:11px;color:var(--purple2);text-decoration:none;font-weight:normal">📖 How to Guide</a>
+            </span>
+          </label>
           <textarea id="senderList" rows="4" placeholder="email1@gmail.com:pass123&#10;email2@gmail.com:pass456" style="width:100%;background:#0a0f1e;border:1px solid var(--border);border-radius:10px;padding:12px;color:var(--text);font-family:'Inter',sans-serif;resize:vertical"></textarea>
           <div style="font-size:11px;color:var(--muted);margin-top:4px">Add one per line. We will rotate between these accounts to avoid rate limits.</div>
         </div>
