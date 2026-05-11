@@ -16,6 +16,19 @@
   }
   body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
 
+  /* Video Background */
+  #bg-video {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    z-index: -1;
+    opacity: 0.15;
+    pointer-events: none;
+  }
+
   /* Animated background */
   body::before{
     content:'';position:fixed;top:0;left:0;width:100%;height:100%;
@@ -155,9 +168,37 @@
   .ql-snow .ql-fill { fill: var(--muted) !important; }
   .ql-snow .ql-picker { color: var(--muted) !important; }
   .ql-editor { font-family:'Inter',sans-serif; font-size: 14px; }
+  
+  /* Full screen loader */
+  #app-loader {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: var(--bg); z-index: 9999;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    transition: opacity 0.5s ease, visibility 0.5s ease;
+  }
+  #app-loader.hidden {
+    opacity: 0; visibility: hidden;
+  }
+  .loader-spinner {
+    width: 48px; height: 48px;
+    border: 4px solid rgba(124,58,237,0.2);
+    border-top-color: var(--purple2);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
 </style>
 </head>
 <body>
+
+<!-- Video Background -->
+<video id="bg-video" autoplay loop muted playsinline></video>
+
+<!-- Initial Loading Screen -->
+<div id="app-loader">
+  <div class="loader-spinner"></div>
+  <div style="margin-top:16px;color:var(--text);font-weight:600;letter-spacing:2px;font-size:12px;opacity:0.8">MADE FOR EMAIL MARKETING</div>
+</div>
+
 <div class="wrapper">
 
   <!-- Header -->
@@ -683,7 +724,29 @@ function toggleSendMethod() {
     document.getElementById('sendgridInputs').style.display = 'block';
   }
 }
+
+// Hide loading screen when window is fully loaded
+window.addEventListener('load', () => {
+  setTimeout(() => {
+    document.getElementById('app-loader').classList.add('hidden');
+  }, 500); // 500ms minimum artificial delay for aesthetics
+});
 </script>
+
+<!-- HLS.js for .m3u8 video playback -->
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<script>
+  var video = document.getElementById('bg-video');
+  var videoSrc = 'https://stream.mux.com/Aa02T7oM1wH5Mk5EEVDYhbZ1ChcdhRsS2m1NYyx4Ua1g.m3u8';
+  if (Hls.isSupported()) {
+    var hls = new Hls();
+    hls.loadSource(videoSrc);
+    hls.attachMedia(video);
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = videoSrc;
+  }
+</script>
+
 <script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
 </body>
 </html>
