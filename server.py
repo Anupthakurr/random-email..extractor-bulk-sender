@@ -53,6 +53,7 @@ class SearchState(TypedDict):
     progress: int
     log: List[str]
     stats: Dict[str, int]
+    search_count: int  # increments each run to offset pagination
 
 sessions_state: Dict[str, SearchState] = {}
 
@@ -64,7 +65,8 @@ def get_state(session_id: str) -> SearchState:
             "email_details": {},
             "progress": 0,
             "log": [],
-            "stats": {"github": 0, "google": 0, "bing": 0, "devfolio": 0}
+            "stats": {"github": 0, "google": 0, "bing": 0, "devfolio": 0},
+            "search_count": 0
         }
     return sessions_state[session_id]
 
@@ -231,6 +233,7 @@ async def start_search(req: SearchRequest, background_tasks: BackgroundTasks):
     state["progress"] = 0
     state["log"] = []
     state["stats"] = {"github": 0, "google": 0, "bing": 0, "devfolio": 0}
+    state["search_count"] = state.get("search_count", 0) + 1  # increment run counter
     background_tasks.add_task(run_search, req)
     return {"status": "started"}
 
@@ -298,13 +301,20 @@ async def search_github(session_id: str, keyword: str, max_results: int):
         f"{keyword} university",
         f"{keyword} college",
     ]
+    # Shuffle keywords so each run explores in a different order
+    random.shuffle(student_keywords)
 
     seen_logins = set()
+    # Offset starting page by run count so each new search fetches different users
+    run_offset = state.get("search_count", 1) - 1
+    page_start = (run_offset * 3) % 10 + 1  # cycles through pages 1-10 across runs
 
     for kw in student_keywords:
         if not state["running"] or len(state["emails"]) >= max_results:
             break
-        for page in range(1, 11):
+        # Build a rotated page range so we don't always start from page 1
+        pages = list(range(page_start, 11)) + list(range(1, page_start))
+        for page in pages:
             if not state["running"]:
                 break
             try:
@@ -418,15 +428,20 @@ async def search_google(session_id: str, keyword: str):
         f'{keyword} "contact me" student email developer',
         f'{keyword} college student open source email',
     ]
+    # Shuffle query order so each run explores different queries first
+    random.shuffle(queries)
 
     scraped_urls = set()
     serp_blacklist = ["google.com", "youtube.com", "facebook.com", "twitter.com", "instagram.com"]
+    # Vary the start parameter to get different result pages on each run
+    run_offset = state.get("search_count", 1) - 1
+    start_param = (run_offset * 10) % 50  # cycles 0, 10, 20, 30, 40
 
     for query in queries:
         if not state["running"]:
             break
         try:
-            url = f"https://www.google.com/search?q={quote(query)}&num=30"
+            url = f"https://www.google.com/search?q={quote(query)}&num=30&start={start_param}"
             resp = requests.get(url, headers=COMMON_HEADERS, timeout=20)
 
             # Extract emails directly from SERP (unlikely but try)
@@ -463,15 +478,20 @@ async def search_bing(session_id: str, keyword: str):
         f'{keyword} college student developer email contact',
         f'{keyword} "contact" student email resume site:github.io',
     ]
+    # Shuffle queries so each run tries a different query first
+    random.shuffle(queries)
 
     scraped_urls = set()
     serp_blacklist = ["bing.com", "microsoft.com", "youtube.com", "facebook.com"]
+    # Vary the first result offset on each run
+    run_offset = state.get("search_count", 1) - 1
+    first_param = (run_offset * 10) % 50  # cycles 0, 10, 20, 30, 40
 
     for query in queries:
         if not state["running"]:
             break
         try:
-            url = f"https://www.bing.com/search?q={quote(query)}&count=30"
+            url = f"https://www.bing.com/search?q={quote(query)}&count=30&first={first_param + 1}"
             resp = requests.get(url, headers=COMMON_HEADERS, timeout=20)
 
             # Direct SERP emails
