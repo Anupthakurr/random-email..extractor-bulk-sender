@@ -142,6 +142,26 @@ def is_valid_email(email: str) -> bool:
         return False
     if "." not in parts[1]:
         return False
+
+    local = parts[0]
+
+    # Reject excessively long local parts (real emails are rarely > 30 chars)
+    if len(local) > 30:
+        return False
+
+    # Reject random-looking tokens: too many digits relative to length
+    digit_ratio = sum(c.isdigit() for c in local) / max(len(local), 1)
+    if digit_ratio > 0.4:  # more than 40% digits → likely a token/hash
+        return False
+
+    # Reject strings with very low vowel ratio (hash/base64 strings have almost no vowels)
+    vowels = set("aeiou")
+    alpha_chars = [c for c in local if c.isalpha()]
+    if len(alpha_chars) >= 8:
+        vowel_ratio = sum(c in vowels for c in alpha_chars) / len(alpha_chars)
+        if vowel_ratio < 0.1:  # less than 10% vowels → looks like a hash
+            return False
+
     return True
 
 
