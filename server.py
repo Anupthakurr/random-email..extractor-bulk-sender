@@ -21,6 +21,9 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
 import random
+import base64
+import sendgrid
+from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 
 app = FastAPI(title="Student Email Extractor")
 
@@ -113,9 +116,12 @@ class SMTPSender(BaseModel):
 
 class CampaignRequest(BaseModel):
     session_id: str
-    smtp_server: str
-    smtp_port: int
-    senders: List[SMTPSender]
+    send_method: str = "smtp" # "smtp" or "sendgrid"
+    sg_api_key: str = ""
+    sg_sender: str = ""
+    smtp_server: str = ""
+    smtp_port: int = 587
+    senders: List[SMTPSender] = []
     subject: str
     body: str
     min_delay: int
@@ -547,13 +553,39 @@ def send_email_sync(smtp_server: str, smtp_port: int, sender_email: str, sender_
         server.login(sender_email, sender_password)
         server.send_message(msg)
 
+def send_email_sendgrid_sync(api_key: str, sender_email: str, to_email: str, subject: str, body_html: str, attachments: list):
+    sg = sendgrid.SendGridAPIClient(api_key=api_key)
+    message = Mail(
+        from_email=sender_email,
+        to_emails=to_email,
+        subject=subject,
+        html_content=body_html
+    )
+    
+    for att in attachments:
+        encoded_content = base64.b64encode(att['content']).decode()
+        attachment = Attachment(
+            FileContent(encoded_content),
+            FileName(att["filename"]),
+            FileType('application/octet-stream'),
+            Disposition('attachment')
+        )
+        message.attachment = attachment
+
+    response = sg.send(message)
+    if response.status_code >= 400:
+        raise Exception(f"SendGrid Error {response.status_code}")
+
 @app.post("/api/campaign/start")
 async def start_campaign(
     background_tasks: BackgroundTasks,
     session_id: str = Form(...),
-    smtp_server: str = Form(...),
-    smtp_port: int = Form(...),
-    senders_raw: str = Form(...),
+    send_method: str = Form("smtp"),
+    sg_api_key: str = Form(""),
+    sg_sender: str = Form(""),
+    smtp_server: str = Form(""),
+    smtp_port: int = Form(587),
+    senders_raw: str = Form("[]"),
     subject: str = Form(...),
     body: str = Form(...),
     min_delay: int = Form(...),
@@ -572,10 +604,15 @@ async def start_campaign(
         
     try:
         senders = json.loads(senders_raw)
-        if not senders:
+        if send_method == "smtp" and not senders:
             raise ValueError()
     except Exception:
-        raise HTTPException(400, "Please provide at least one sender account in valid JSON format.")
+        if send_method == "smtp":
+            raise HTTPException(400, "Please provide at least one sender account in valid JSON format.")
+
+    if send_method == "sendgrid":
+        if not sg_api_key or not sg_sender:
+            raise HTTPException(400, "Please provide SendGrid API Key and Sender Email.")
 
     state["running"] = True
     state["sent"] = 0
@@ -597,9 +634,12 @@ async def start_campaign(
     # We construct a CampaignRequest-like object internally
     req_dict = {
         "session_id": session_id,
+        "send_method": send_method,
+        "sg_api_key": sg_api_key,
+        "sg_sender": sg_sender,
         "smtp_server": smtp_server,
         "smtp_port": smtp_port,
-        "senders": [SMTPSender(**s) for s in senders],
+        "senders": [SMTPSender(**s) for s in senders] if senders else [],
         "subject": subject,
         "body": body,
         "min_delay": min_delay,
@@ -648,15 +688,26 @@ async def run_campaign(req: CampaignRequest, targets: list, attachments: list):
         body = req.body.replace("{email}", target_email).replace("{name}", target_name).replace("{source}", target_source)
         
         # Send email via thread to avoid blocking event loop
-        log_campaign(session_id, f"📧 Sending to {target_email} via {sender.email}...")
+        log_campaign(session_id, f"📧 Sending to {target_email}...")
         try:
-            await asyncio.to_thread(
-                send_email_sync,
-                req.smtp_server, req.smtp_port,
-                sender.email, sender.password,
-                target_email, subject, body,
-                attachments
-            )
+            if req.send_method == "sendgrid":
+                await asyncio.to_thread(
+                    send_email_sendgrid_sync,
+                    req.sg_api_key,
+                    req.sg_sender,
+                    target_email,
+                    subject,
+                    body,
+                    attachments
+                )
+            else:
+                await asyncio.to_thread(
+                    send_email_sync,
+                    req.smtp_server, req.smtp_port,
+                    sender.email, sender.password,
+                    target_email, subject, body,
+                    attachments
+                )
             state["sent"] += 1
             log_campaign(session_id, f"✅ Sent to {target_email}")
         except Exception as e:

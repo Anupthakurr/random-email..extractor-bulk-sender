@@ -287,17 +287,40 @@
   <!-- Bulk Mailer Section -->
   <div class="card" style="margin-top:24px" id="mailerSection">
     <div class="card-title">📨 Bulk Email Campaign</div>
+    
+    <div style="margin-bottom:16px;display:flex;gap:16px;background:#0a0f1e;padding:12px;border-radius:10px;border:1px solid var(--border)">
+      <label style="margin:0;display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-weight:500">
+        <input type="radio" name="sendMethod" value="smtp" checked onchange="toggleSendMethod()" /> 
+        Standard SMTP (Free)
+      </label>
+      <label style="margin:0;display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-weight:500">
+        <input type="radio" name="sendMethod" value="sendgrid" onchange="toggleSendMethod()" /> 
+        SendGrid API (High Volume)
+      </label>
+    </div>
+
     <div class="grid" style="grid-template-columns:1fr 1fr;gap:24px">
       <div>
-        <label>SMTP Server & Port</label>
-        <div style="display:flex;gap:10px">
-          <input type="text" id="smtpServer" value="smtp.gmail.com" placeholder="smtp.gmail.com" />
-          <input type="number" id="smtpPort" value="587" style="width:100px" />
+        <div id="smtpInputs">
+          <label>SMTP Server & Port</label>
+          <div style="display:flex;gap:10px">
+            <input type="text" id="smtpServer" value="smtp.gmail.com" placeholder="smtp.gmail.com" />
+            <input type="number" id="smtpPort" value="587" style="width:100px" />
+          </div>
+          
+          <label>Sender Accounts (Email : App Password)</label>
+          <textarea id="senderList" rows="4" placeholder="email1@gmail.com:pass123&#10;email2@gmail.com:pass456" style="width:100%;background:#0a0f1e;border:1px solid var(--border);border-radius:10px;padding:12px;color:var(--text);font-family:'Inter',sans-serif;resize:vertical"></textarea>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">Add one per line. We will rotate between these accounts to avoid rate limits.</div>
         </div>
-        
-        <label>Sender Accounts (Email : App Password)</label>
-        <textarea id="senderList" rows="4" placeholder="email1@gmail.com:pass123&#10;email2@gmail.com:pass456" style="width:100%;background:#0a0f1e;border:1px solid var(--border);border-radius:10px;padding:12px;color:var(--text);font-family:'Inter',sans-serif;resize:vertical"></textarea>
-        <div style="font-size:11px;color:var(--muted);margin-top:4px">Add one per line. We will rotate between these accounts to avoid rate limits.</div>
+
+        <div id="sendgridInputs" style="display:none">
+          <label>SendGrid API Key</label>
+          <input type="text" id="sgApiKey" placeholder="SG.xxxx..." />
+          
+          <label>Verified Sender Email</label>
+          <input type="text" id="sgSender" placeholder="you@yourdomain.com" />
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">Must be the email you verified in your SendGrid dashboard.</div>
+        </div>
 
         <label>Delay Between Emails (Seconds)</label>
         <div style="display:flex;gap:10px;align-items:center">
@@ -524,30 +547,41 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 async function startCampaign() {
+  const sendMethod = document.querySelector('input[name="sendMethod"]:checked').value;
   const smtpServer = document.getElementById('smtpServer').value.trim();
   const smtpPort = parseInt(document.getElementById('smtpPort').value) || 587;
   const sendersRaw = document.getElementById('senderList').value.trim().split('\n');
+  const sgApiKey = document.getElementById('sgApiKey').value.trim();
+  const sgSender = document.getElementById('sgSender').value.trim();
+  
   const subject = document.getElementById('emailSubject').value.trim();
   const body = quill.root.innerHTML;
   const minDelay = parseInt(document.getElementById('minDelay').value) || 30;
   const maxDelay = parseInt(document.getElementById('maxDelay').value) || 60;
   
   if (!allEmails.length) { alert('You must run an email extraction search first!'); return; }
-  if (!smtpServer || !sendersRaw[0] || !subject || !body) { alert('Please fill in all campaign fields!'); return; }
+  if (!subject || !body) { alert('Please fill in the subject and body!'); return; }
   if (minDelay > maxDelay) { alert('Min delay cannot be greater than max delay!'); return; }
   
   const senders = [];
-  for (const line of sendersRaw) {
-    const parts = line.split(':');
-    if (parts.length >= 2) {
-      senders.push({ email: parts[0].trim(), password: parts[1].trim() });
+  if (sendMethod === 'smtp') {
+    if (!smtpServer || !sendersRaw[0]) { alert('Please fill in SMTP settings!'); return; }
+    for (const line of sendersRaw) {
+      const parts = line.split(':');
+      if (parts.length >= 2) {
+        senders.push({ email: parts[0].trim(), password: parts[1].trim() });
+      }
     }
+    if (!senders.length) { alert('Invalid sender format. Use email:password'); return; }
+  } else {
+    if (!sgApiKey || !sgSender) { alert('Please provide SendGrid API Key and Sender Email!'); return; }
   }
-  
-  if (!senders.length) { alert('Invalid sender format. Use email:password'); return; }
 
   const formData = new FormData();
   formData.append('session_id', sessionId);
+  formData.append('send_method', sendMethod);
+  formData.append('sg_api_key', sgApiKey);
+  formData.append('sg_sender', sgSender);
   formData.append('smtp_server', smtpServer);
   formData.append('smtp_port', smtpPort);
   formData.append('senders_raw', JSON.stringify(senders));
@@ -637,6 +671,17 @@ function resetCampButtons() {
   document.getElementById('startCampaignBtn').disabled = false;
   document.getElementById('startCampaignBtn').innerHTML = '🚀 Launch Campaign';
   document.getElementById('stopCampaignBtn').style.display = 'none';
+}
+
+function toggleSendMethod() {
+  const method = document.querySelector('input[name="sendMethod"]:checked').value;
+  if (method === 'smtp') {
+    document.getElementById('smtpInputs').style.display = 'block';
+    document.getElementById('sendgridInputs').style.display = 'none';
+  } else {
+    document.getElementById('smtpInputs').style.display = 'none';
+    document.getElementById('sendgridInputs').style.display = 'block';
+  }
 }
 </script>
 <script src="https://cdn.quilljs.com/1.3.6/quill.min.js"></script>
