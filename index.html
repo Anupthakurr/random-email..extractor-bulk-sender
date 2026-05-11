@@ -449,6 +449,16 @@ async function startSearch() {
       document.getElementById('stopBtn').style.display = 'block';
       document.getElementById('progressWrap').classList.add('active');
       clearLog();
+      // Reset previous results
+      allEmails = [];
+      renderTable([]);
+      document.getElementById('totalCount').textContent = '0';
+      document.getElementById('githubCount').textContent = '0';
+      document.getElementById('googleCount').textContent = '0';
+      document.getElementById('bingCount').textContent = '0';
+      document.getElementById('foundCount').textContent = '0';
+      document.getElementById('progressFill').style.width = '0%';
+      document.getElementById('progressPct').textContent = '0%';
       appendLog('🚀 Search started!', 'info');
       polling = setInterval(pollStatus, 2000);
     } else {
