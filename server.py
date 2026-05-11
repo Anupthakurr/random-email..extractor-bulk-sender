@@ -9,9 +9,10 @@ from pydantic import BaseModel
 import requests
 import re
 import asyncio
-from typing import List
-from urllib.parse import urlparse, urljoin
-from bs4 import BeautifulSoup
+import os
+from typing import List, Set, Dict, TypedDict
+from urllib.parse import urlparse, urljoin, quote
+from bs4 import BeautifulSoup, Tag
 
 app = FastAPI(title="Student Email Extractor")
 
@@ -34,7 +35,15 @@ BLOCKED_DOMAINS = [
     "cdnjs.com", "bootstrapcdn.com", "fontawesome.com",
 ]
 
-search_state = {
+class SearchState(TypedDict):
+    running: bool
+    emails: Set[str]
+    email_details: Dict[str, dict]
+    progress: int
+    log: List[str]
+    stats: Dict[str, int]
+
+search_state: SearchState = {
     "running": False,
     "emails": set(),
     "email_details": {},
@@ -130,16 +139,20 @@ def extract_links_from_serp(html: str, base_domain_blacklist: list) -> List[str]
     soup = BeautifulSoup(html, "html.parser")
     urls = []
     for a in soup.find_all("a", href=True):
-        href = a["href"]
-        # Google/Bing wrap URLs in redirect params
-        if href.startswith("/url?q="):
-            href = href[7:].split("&")[0]
-        if href.startswith("http") and not href.startswith("https://www.google") \
-                and not href.startswith("https://www.bing"):
-            parsed = urlparse(href)
-            domain = parsed.netloc.lower()
-            if not any(bl in domain for bl in base_domain_blacklist):
-                urls.append(href)
+        if isinstance(a, Tag):
+            href = a.get("href")
+            if isinstance(href, list):
+                href = href[0]
+            if isinstance(href, str):
+                # Google/Bing wrap URLs in redirect params
+                if href.startswith("/url?q="):
+                    href = href[7:].split("&")[0]
+                if href.startswith("http") and not href.startswith("https://www.google") \
+                        and not href.startswith("https://www.bing"):
+                    parsed = urlparse(href)
+                    domain = parsed.netloc.lower()
+                    if not any(bl in domain for bl in base_domain_blacklist):
+                        urls.append(href)
     return list(dict.fromkeys(urls))  # deduplicate while preserving order
 
 
@@ -205,11 +218,15 @@ async def search_github(keyword: str, max_results: int):
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "EmailExtractorTool/1.0"
     }
+    if "GITHUB_TOKEN" in os.environ:
+        headers["Authorization"] = f"token {os.environ['GITHUB_TOKEN']}"
 
     student_keywords = [
         keyword,
         f"{keyword} student",
         f"{keyword} developer",
+        f"{keyword} university",
+        f"{keyword} college",
     ]
 
     seen_logins = set()
@@ -217,11 +234,11 @@ async def search_github(keyword: str, max_results: int):
     for kw in student_keywords:
         if not search_state["running"] or len(search_state["emails"]) >= max_results:
             break
-        for page in range(1, 6):
+        for page in range(1, 11):
             if not search_state["running"]:
                 break
             try:
-                url = f"https://api.github.com/search/users?q={requests.utils.quote(kw)}&per_page=30&page={page}"
+                url = f"https://api.github.com/search/users?q={quote(kw)}&per_page=30&page={page}"
                 resp = requests.get(url, headers=headers, timeout=15)
 
                 if resp.status_code == 403:
@@ -264,73 +281,54 @@ async def search_github(keyword: str, max_results: int):
 
 
 async def scrape_github_user(login: str, headers: dict) -> int:
-    """Fetch profile + README + repos for a GitHub user and extract emails."""
+    """Fetch profile + README + repos for a GitHub user and extract emails without hitting API rate limits."""
     count = 0
-    base = "https://api.github.com"
 
-    # 1. Profile email
-    try:
-        r = requests.get(f"{base}/users/{login}", headers=headers, timeout=10)
-        if r.status_code == 200:
-            profile = r.json()
-            email = profile.get("email")
-            name = profile.get("name") or login
-            bio = profile.get("bio") or ""
-            blog = profile.get("blog") or ""
-
-            if email:
-                if add_email(email, "github", name, f"github.com/{login}"):
-                    count += 1
-
-            # Bio emails
-            for e in extract_emails_from_text(bio):
-                if add_email(e, "github", name, f"github.com/{login}"):
-                    count += 1
-
-            # Blog / personal website
-            if blog and blog.startswith("http"):
-                n = scrape_page_for_emails(blog, "github", name, f"github.com/{login} blog")
-                count += n
-    except Exception:
-        pass
-
-    # 2. Profile README (username/username repo)
-    try:
-        readme_url = f"https://raw.githubusercontent.com/{login}/{login}/main/README.md"
-        r = requests.get(readme_url, timeout=8)
-        if r.status_code == 200:
-            for e in extract_emails_from_text(r.text):
-                if add_email(e, "github", login, f"github.com/{login} README"):
-                    count += 1
-        else:
-            # Try master branch
-            readme_url2 = f"https://raw.githubusercontent.com/{login}/{login}/master/README.md"
-            r2 = requests.get(readme_url2, timeout=8)
-            if r2.status_code == 200:
-                for e in extract_emails_from_text(r2.text):
+    # 1. Profile README (fast, no rate limit)
+    for branch in ["main", "master"]:
+        try:
+            readme_url = f"https://raw.githubusercontent.com/{login}/{login}/{branch}/README.md"
+            r = requests.get(readme_url, timeout=8)
+            if r.status_code == 200:
+                for e in extract_emails_from_text(r.text):
                     if add_email(e, "github", login, f"github.com/{login} README"):
                         count += 1
-    except Exception:
-        pass
+                break
+        except Exception:
+            pass
 
-    # 3. Top repos README
+    # 2. Scrape GitHub profile HTML directly (NO API rate limit!)
     try:
-        repos_r = requests.get(f"{base}/users/{login}/repos?sort=stars&per_page=5", headers=headers, timeout=10)
-        if repos_r.status_code == 200:
-            repos = repos_r.json()
-            for repo in repos[:3]:
-                repo_name = repo.get("name", "")
-                for branch in ["main", "master"]:
-                    try:
-                        raw = f"https://raw.githubusercontent.com/{login}/{repo_name}/{branch}/README.md"
-                        rr = requests.get(raw, timeout=8)
-                        if rr.status_code == 200:
-                            for e in extract_emails_from_text(rr.text):
-                                if add_email(e, "github", login, f"github.com/{login}/{repo_name}"):
-                                    count += 1
-                            break
-                    except Exception:
-                        pass
+        r = requests.get(f"https://github.com/{login}", headers={"User-Agent": COMMON_HEADERS["User-Agent"]}, timeout=10)
+        if r.status_code == 200:
+            for e in extract_emails_from_text(r.text):
+                if add_email(e, "github", login, f"github.com/{login} Profile"):
+                    count += 1
+            
+            soup = BeautifulSoup(r.text, "html.parser")
+            # Extract website link if present
+            for a in soup.find_all("a", rel="nofollow me"):
+                href = a.get("href")
+                if isinstance(href, str) and href.startswith("http"):
+                    n = scrape_page_for_emails(href, "github", login, f"github.com/{login} blog")
+                    count += n
+
+            # 3. Top repos from pinned items in HTML
+            pinned = soup.find_all("span", class_="repo")
+            for span in pinned:
+                repo_name = span.text.strip()
+                if repo_name:
+                    for branch in ["main", "master"]:
+                        try:
+                            raw = f"https://raw.githubusercontent.com/{login}/{repo_name}/{branch}/README.md"
+                            rr = requests.get(raw, timeout=8)
+                            if rr.status_code == 200:
+                                for e in extract_emails_from_text(rr.text):
+                                    if add_email(e, "github", login, f"github.com/{login}/{repo_name}"):
+                                        count += 1
+                                break
+                        except Exception:
+                            pass
     except Exception:
         pass
 
@@ -356,7 +354,7 @@ async def search_google(keyword: str):
         if not search_state["running"]:
             break
         try:
-            url = f"https://www.google.com/search?q={requests.utils.quote(query)}&num=30"
+            url = f"https://www.google.com/search?q={quote(query)}&num=30"
             resp = requests.get(url, headers=COMMON_HEADERS, timeout=20)
 
             # Extract emails directly from SERP (unlikely but try)
@@ -400,7 +398,7 @@ async def search_bing(keyword: str):
         if not search_state["running"]:
             break
         try:
-            url = f"https://www.bing.com/search?q={requests.utils.quote(query)}&count=30"
+            url = f"https://www.bing.com/search?q={quote(query)}&count=30"
             resp = requests.get(url, headers=COMMON_HEADERS, timeout=20)
 
             # Direct SERP emails
@@ -432,7 +430,7 @@ async def search_devfolio(keyword: str):
     log(f"🚀 Devfolio: Searching hackathon participants...")
     try:
         pages_to_scrape = [
-            f"https://devfolio.co/search?q={requests.utils.quote(keyword)}",
+            f"https://devfolio.co/search?q={quote(keyword)}",
             "https://devfolio.co/hackathons",
         ]
 
@@ -468,5 +466,5 @@ app.mount("/", StaticFiles(directory=".", html=True), name="static")
 if __name__ == "__main__":
     import uvicorn
     print("\n[*] Student Email Extractor starting...")
-    print("[*] Open your browser at: http://localhost:8000\n")
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
+    print("[*] Open your browser at: http://localhost:8001\n")
+    uvicorn.run(app, host="0.0.0.0", port=8001, reload=False)
