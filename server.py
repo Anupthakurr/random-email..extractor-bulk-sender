@@ -586,6 +586,7 @@ async def start_campaign(
     smtp_server: str = Form(""),
     smtp_port: int = Form(587),
     senders_raw: str = Form("[]"),
+    manual_emails: str = Form(""),
     subject: str = Form(...),
     body: str = Form(...),
     min_delay: int = Form(...),
@@ -597,10 +598,21 @@ async def start_campaign(
         raise HTTPException(400, "Campaign already running. Stop it first.")
     
     search_state = get_state(session_id)
-    target_emails = list(search_state["email_details"].values())
+    target_emails = list(search_state.get("email_details", {}).values())
+    
+    if manual_emails.strip():
+        for line in manual_emails.replace(",", "\n").split("\n"):
+            email = line.strip()
+            if email and "@" in email:
+                target_emails.append({
+                    "email": email,
+                    "name": "",
+                    "source": "Manual",
+                    "platform": "Manual"
+                })
     
     if not target_emails:
-        raise HTTPException(400, "No extracted emails to send to. Please search first.")
+        raise HTTPException(400, "No extracted or manual emails to send to. Please search or add manual emails.")
         
     try:
         senders = json.loads(senders_raw)
