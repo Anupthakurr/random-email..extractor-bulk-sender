@@ -10,6 +10,7 @@ import requests
 import re
 import asyncio
 import os
+import uvicorn
 from typing import List, Set, Dict, TypedDict
 from urllib.parse import urlparse, urljoin, quote
 from bs4 import BeautifulSoup, Tag
@@ -43,14 +44,19 @@ class SearchState(TypedDict):
     log: List[str]
     stats: Dict[str, int]
 
-search_state: SearchState = {
-    "running": False,
-    "emails": set(),
-    "email_details": {},
-    "progress": 0,
-    "log": [],
-    "stats": {"github": 0, "google": 0, "bing": 0, "devfolio": 0}
-}
+sessions_state: Dict[str, SearchState] = {}
+
+def get_state(session_id: str) -> SearchState:
+    if session_id not in sessions_state:
+        sessions_state[session_id] = {
+            "running": False,
+            "emails": set(),
+            "email_details": {},
+            "progress": 0,
+            "log": [],
+            "stats": {"github": 0, "google": 0, "bing": 0, "devfolio": 0}
+        }
+    return sessions_state[session_id]
 
 COMMON_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -60,6 +66,7 @@ COMMON_HEADERS = {
 
 
 class SearchRequest(BaseModel):
+    session_id: str
     keyword: str
     sources: List[str]
     max_results: int = 500
@@ -81,26 +88,28 @@ def is_valid_email(email: str) -> bool:
     return True
 
 
-def add_email(email: str, source: str, name: str = "", platform: str = "") -> bool:
+def add_email(session_id: str, email: str, source: str, name: str = "", platform: str = "") -> bool:
+    state = get_state(session_id)
     email = email.lower().strip()
-    if is_valid_email(email) and email not in search_state["emails"]:
-        search_state["emails"].add(email)
-        search_state["email_details"][email] = {
+    if is_valid_email(email) and email not in state["emails"]:
+        state["emails"].add(email)
+        state["email_details"][email] = {
             "email": email,
             "source": source,
             "name": name,
             "platform": platform
         }
-        search_state["stats"][source] = search_state["stats"].get(source, 0) + 1
+        state["stats"][source] = state["stats"].get(source, 0) + 1
         return True
     return False
 
 
-def log(msg: str):
-    search_state["log"].append(msg)
-    if len(search_state["log"]) > 200:
-        search_state["log"] = search_state["log"][-200:]
-    print(msg)
+def log(session_id: str, msg: str):
+    state = get_state(session_id)
+    state["log"].append(msg)
+    if len(state["log"]) > 200:
+        state["log"] = state["log"][-200:]
+    print(f"[{session_id}] {msg}")
 
 
 def extract_emails_from_text(text: str) -> List[str]:
@@ -118,7 +127,7 @@ def extract_emails_from_text(text: str) -> List[str]:
     return list(found)
 
 
-def scrape_page_for_emails(url: str, source_name: str, name: str = "", platform: str = "") -> int:
+def scrape_page_for_emails(session_id: str, url: str, source_name: str, name: str = "", platform: str = "") -> int:
     """Fetch a URL and extract all emails from it. Returns count of new emails added."""
     count = 0
     try:
@@ -127,7 +136,7 @@ def scrape_page_for_emails(url: str, source_name: str, name: str = "", platform:
             text = resp.text
             emails = extract_emails_from_text(text)
             for e in emails:
-                if add_email(e, source_name, name, platform):
+                if add_email(session_id, e, source_name, name, platform):
                     count += 1
     except Exception:
         pass
@@ -158,62 +167,68 @@ def extract_links_from_serp(html: str, base_domain_blacklist: list) -> List[str]
 
 @app.post("/api/search/start")
 async def start_search(req: SearchRequest, background_tasks: BackgroundTasks):
-    if search_state["running"]:
+    state = get_state(req.session_id)
+    if state["running"]:
         raise HTTPException(400, "Search already running. Stop it first.")
-    search_state["running"] = True
-    search_state["emails"] = set()
-    search_state["email_details"] = {}
-    search_state["progress"] = 0
-    search_state["log"] = []
-    search_state["stats"] = {"github": 0, "google": 0, "bing": 0, "devfolio": 0}
+    state["running"] = True
+    state["emails"] = set()
+    state["email_details"] = {}
+    state["progress"] = 0
+    state["log"] = []
+    state["stats"] = {"github": 0, "google": 0, "bing": 0, "devfolio": 0}
     background_tasks.add_task(run_search, req)
     return {"status": "started"}
 
 
 @app.get("/api/search/status")
-async def get_status():
+async def get_status(session_id: str):
+    state = get_state(session_id)
     return {
-        "running": search_state["running"],
-        "count": len(search_state["emails"]),
-        "progress": search_state["progress"],
-        "log": search_state["log"][-20:],
-        "emails": list(search_state["email_details"].values()),
-        "stats": search_state["stats"]
+        "running": state["running"],
+        "count": len(state["emails"]),
+        "progress": state["progress"],
+        "log": state["log"][-20:],
+        "emails": list(state["email_details"].values()),
+        "stats": state["stats"]
     }
 
 
 @app.post("/api/search/stop")
-async def stop_search():
-    search_state["running"] = False
-    log("🛑 Search stopped by user.")
+async def stop_search(session_id: str):
+    state = get_state(session_id)
+    state["running"] = False
+    log(session_id, "🛑 Search stopped by user.")
     return {"status": "stopped"}
 
 
 async def run_search(req: SearchRequest):
+    session_id = req.session_id
+    state = get_state(session_id)
     try:
         tasks = []
         if "github" in req.sources:
-            tasks.append(search_github(req.keyword, req.max_results))
+            tasks.append(search_github(session_id, req.keyword, req.max_results))
         if "google" in req.sources:
-            tasks.append(search_google(req.keyword))
+            tasks.append(search_google(session_id, req.keyword))
         if "bing" in req.sources:
-            tasks.append(search_bing(req.keyword))
+            tasks.append(search_bing(session_id, req.keyword))
         if "devfolio" in req.sources:
-            tasks.append(search_devfolio(req.keyword))
+            tasks.append(search_devfolio(session_id, req.keyword))
 
         await asyncio.gather(*tasks)
-        log(f"✅ Search complete! Found {len(search_state['emails'])} unique emails.")
+        log(session_id, f"✅ Search complete! Found {len(state['emails'])} unique emails.")
     except Exception as e:
-        log(f"❌ Fatal error: {e}")
+        log(session_id, f"❌ Fatal error: {e}")
     finally:
-        search_state["running"] = False
-        search_state["progress"] = 100
+        state["running"] = False
+        state["progress"] = 100
 
 
 # ─── GITHUB ───────────────────────────────────────────────────────────────────
 
-async def search_github(keyword: str, max_results: int):
-    log(f"🐙 GitHub: Searching for '{keyword}' students...")
+async def search_github(session_id: str, keyword: str, max_results: int):
+    state = get_state(session_id)
+    log(session_id, f"🐙 GitHub: Searching for '{keyword}' students...")
     headers = {
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "EmailExtractorTool/1.0"
@@ -232,22 +247,22 @@ async def search_github(keyword: str, max_results: int):
     seen_logins = set()
 
     for kw in student_keywords:
-        if not search_state["running"] or len(search_state["emails"]) >= max_results:
+        if not state["running"] or len(state["emails"]) >= max_results:
             break
         for page in range(1, 11):
-            if not search_state["running"]:
+            if not state["running"]:
                 break
             try:
                 url = f"https://api.github.com/search/users?q={quote(kw)}&per_page=30&page={page}"
                 resp = requests.get(url, headers=headers, timeout=15)
 
                 if resp.status_code == 403:
-                    log("⏳ GitHub rate limit hit. Waiting 60 seconds...")
+                    log(session_id, "⏳ GitHub rate limit hit. Waiting 60 seconds...")
                     await asyncio.sleep(60)
                     continue
 
                 if resp.status_code != 200:
-                    log(f"⚠️ GitHub returned status {resp.status_code}")
+                    log(session_id, f"⚠️ GitHub returned status {resp.status_code}")
                     break
 
                 data = resp.json()
@@ -255,10 +270,10 @@ async def search_github(keyword: str, max_results: int):
                 if not users:
                     break
 
-                log(f"🐙 GitHub: Found {len(users)} profiles on page {page}...")
+                log(session_id, f"🐙 GitHub: Found {len(users)} profiles on page {page}...")
 
                 for user in users:
-                    if not search_state["running"]:
+                    if not state["running"]:
                         break
                     login = user["login"]
                     if login in seen_logins:
@@ -266,9 +281,9 @@ async def search_github(keyword: str, max_results: int):
                     seen_logins.add(login)
 
                     try:
-                        found = await scrape_github_user(login, headers)
+                        found = await scrape_github_user(session_id, login, headers)
                         if found:
-                            log(f"✅ GitHub [{login}]: {found} email(s) found")
+                            log(session_id, f"✅ GitHub [{login}]: {found} email(s) found")
                         await asyncio.sleep(0.5)
                     except Exception:
                         pass
@@ -276,11 +291,11 @@ async def search_github(keyword: str, max_results: int):
                 await asyncio.sleep(1.5)
 
             except Exception as e:
-                log(f"❌ GitHub error: {e}")
+                log(session_id, f"❌ GitHub error: {e}")
                 break
 
 
-async def scrape_github_user(login: str, headers: dict) -> int:
+async def scrape_github_user(session_id: str, login: str, headers: dict) -> int:
     """Fetch profile + README + repos for a GitHub user and extract emails without hitting API rate limits."""
     count = 0
 
@@ -291,7 +306,7 @@ async def scrape_github_user(login: str, headers: dict) -> int:
             r = requests.get(readme_url, timeout=8)
             if r.status_code == 200:
                 for e in extract_emails_from_text(r.text):
-                    if add_email(e, "github", login, f"github.com/{login} README"):
+                    if add_email(session_id, e, "github", login, f"github.com/{login} README"):
                         count += 1
                 break
         except Exception:
@@ -302,7 +317,7 @@ async def scrape_github_user(login: str, headers: dict) -> int:
         r = requests.get(f"https://github.com/{login}", headers={"User-Agent": COMMON_HEADERS["User-Agent"]}, timeout=10)
         if r.status_code == 200:
             for e in extract_emails_from_text(r.text):
-                if add_email(e, "github", login, f"github.com/{login} Profile"):
+                if add_email(session_id, e, "github", login, f"github.com/{login} Profile"):
                     count += 1
             
             soup = BeautifulSoup(r.text, "html.parser")
@@ -311,7 +326,7 @@ async def scrape_github_user(login: str, headers: dict) -> int:
                 if isinstance(a, Tag):
                     href = a.get("href")
                     if isinstance(href, str) and href.startswith("http"):
-                        n = scrape_page_for_emails(href, "github", login, f"github.com/{login} blog")
+                        n = scrape_page_for_emails(session_id, href, "github", login, f"github.com/{login} blog")
                         count += n
 
             # 3. Top repos from pinned items in HTML
@@ -325,7 +340,7 @@ async def scrape_github_user(login: str, headers: dict) -> int:
                             rr = requests.get(raw, timeout=8)
                             if rr.status_code == 200:
                                 for e in extract_emails_from_text(rr.text):
-                                    if add_email(e, "github", login, f"github.com/{login}/{repo_name}"):
+                                    if add_email(session_id, e, "github", login, f"github.com/{login}/{repo_name}"):
                                         count += 1
                                 break
                         except Exception:
@@ -338,8 +353,9 @@ async def scrape_github_user(login: str, headers: dict) -> int:
 
 # ─── GOOGLE ───────────────────────────────────────────────────────────────────
 
-async def search_google(keyword: str):
-    log(f"🔎 Google: Dorking for '{keyword}' student emails...")
+async def search_google(session_id: str, keyword: str):
+    state = get_state(session_id)
+    log(session_id, f"🔎 Google: Dorking for '{keyword}' student emails...")
     queries = [
         f'"{keyword}" student email contact site:github.io',
         f'"{keyword}" student "gmail.com" email portfolio',
@@ -352,7 +368,7 @@ async def search_google(keyword: str):
     serp_blacklist = ["google.com", "youtube.com", "facebook.com", "twitter.com", "instagram.com"]
 
     for query in queries:
-        if not search_state["running"]:
+        if not state["running"]:
             break
         try:
             url = f"https://www.google.com/search?q={quote(query)}&num=30"
@@ -360,32 +376,33 @@ async def search_google(keyword: str):
 
             # Extract emails directly from SERP (unlikely but try)
             for e in extract_emails_from_text(resp.text):
-                add_email(e, "google", "", "Google SERP")
+                add_email(session_id, e, "google", "", "Google SERP")
 
             # Extract result URLs and scrape each
             result_urls = extract_links_from_serp(resp.text, serp_blacklist)
-            log(f"🔎 Google: Found {len(result_urls)} pages to scrape for query...")
+            log(session_id, f"🔎 Google: Found {len(result_urls)} pages to scrape for query...")
 
             for page_url in result_urls[:8]:  # scrape top 8 results per query
-                if page_url in scraped_urls or not search_state["running"]:
+                if page_url in scraped_urls or not state["running"]:
                     continue
                 scraped_urls.add(page_url)
-                n = scrape_page_for_emails(page_url, "google", "", page_url)
+                n = scrape_page_for_emails(session_id, page_url, "google", "", page_url)
                 if n > 0:
-                    log(f"✅ Google scraped: {n} email(s) from {page_url[:60]}")
+                    log(session_id, f"✅ Google scraped: {n} email(s) from {page_url[:60]}")
                 await asyncio.sleep(1)
 
             await asyncio.sleep(5)
         except Exception as e:
-            log(f"❌ Google error: {e}")
+            log(session_id, f"❌ Google error: {e}")
 
-    log("🔎 Google dorking complete.")
+    log(session_id, "🔎 Google dorking complete.")
 
 
 # ─── BING ─────────────────────────────────────────────────────────────────────
 
-async def search_bing(keyword: str):
-    log(f"🅱️ Bing: Searching for '{keyword}' student emails...")
+async def search_bing(session_id: str, keyword: str):
+    state = get_state(session_id)
+    log(session_id, f"🅱️ Bing: Searching for '{keyword}' student emails...")
     queries = [
         f'"{keyword}" student email github.io portfolio',
         f'{keyword} college student developer email contact',
@@ -396,7 +413,7 @@ async def search_bing(keyword: str):
     serp_blacklist = ["bing.com", "microsoft.com", "youtube.com", "facebook.com"]
 
     for query in queries:
-        if not search_state["running"]:
+        if not state["running"]:
             break
         try:
             url = f"https://www.bing.com/search?q={quote(query)}&count=30"
@@ -404,31 +421,31 @@ async def search_bing(keyword: str):
 
             # Direct SERP emails
             for e in extract_emails_from_text(resp.text):
-                add_email(e, "bing", "", "Bing SERP")
+                add_email(session_id, e, "bing", "", "Bing SERP")
 
             result_urls = extract_links_from_serp(resp.text, serp_blacklist)
-            log(f"🅱️ Bing: Found {len(result_urls)} pages to scrape...")
+            log(session_id, f"🅱️ Bing: Found {len(result_urls)} pages to scrape...")
 
             for page_url in result_urls[:8]:
-                if page_url in scraped_urls or not search_state["running"]:
+                if page_url in scraped_urls or not state["running"]:
                     continue
                 scraped_urls.add(page_url)
-                n = scrape_page_for_emails(page_url, "bing", "", page_url)
+                n = scrape_page_for_emails(session_id, page_url, "bing", "", page_url)
                 if n > 0:
-                    log(f"✅ Bing scraped: {n} email(s) from {page_url[:60]}")
+                    log(session_id, f"✅ Bing scraped: {n} email(s) from {page_url[:60]}")
                 await asyncio.sleep(1)
 
             await asyncio.sleep(3)
         except Exception as e:
-            log(f"❌ Bing error: {e}")
+            log(session_id, f"❌ Bing error: {e}")
 
-    log("🅱️ Bing search complete.")
+    log(session_id, "🅱️ Bing search complete.")
 
 
 # ─── DEVFOLIO ─────────────────────────────────────────────────────────────────
 
-async def search_devfolio(keyword: str):
-    log(f"🚀 Devfolio: Searching hackathon participants...")
+async def search_devfolio(session_id: str, keyword: str):
+    log(session_id, f"🚀 Devfolio: Searching hackathon participants...")
     try:
         pages_to_scrape = [
             f"https://devfolio.co/search?q={quote(keyword)}",
@@ -452,20 +469,19 @@ async def search_devfolio(keyword: str):
 
         total = 0
         for url in pages_to_scrape:
-            n = scrape_page_for_emails(url, "devfolio", "", "Devfolio")
+            n = scrape_page_for_emails(session_id, url, "devfolio", "", "Devfolio")
             total += n
             await asyncio.sleep(2)
 
-        log(f"🚀 Devfolio: Found {total} emails total")
+        log(session_id, f"🚀 Devfolio: Found {total} emails total")
     except Exception as e:
-        log(f"❌ Devfolio error: {e}")
+        log(session_id, f"❌ Devfolio error: {e}")
 
 
 # Serve static files (frontend)
 app.mount("/", StaticFiles(directory=".", html=True), name="static")
 
 if __name__ == "__main__":
-    import uvicorn
     port = int(os.environ.get("PORT", 8001))
     print(f"\n[*] Student Email Extractor starting...")
     print(f"[*] Open your browser at: http://localhost:{port}\n")
