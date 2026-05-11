@@ -13,10 +13,37 @@ Phase 2: Bulk Outreach (Contacting your targets)
 Once the extraction is finished, you can contact all of them directly from the app.
 
 Choose Sending Method: Scroll down to the Bulk Mailer section. Choose either:
+
 Standard SMTP: If you want to use regular Gmail/Outlook accounts for free.
+
 SendGrid API: If you paid for SendGrid to handle massive volume.
+
 Configure Senders (If using SMTP): Type in the email address and App Password for the accounts you want to send from. You can add 5 or 10 different accounts here, and the app will automatically "rotate" through them to keep you under Gmail's daily limits.
+
 Set the Delay: Set a random delay (e.g., between 30 and 60 seconds). This forces the app to pause between every email it sends so it perfectly mimics a human typing, keeping your accounts safe from spam filters.
+
 Draft your Message: Use the Rich Text Editor to write your email. Make text bold, add links, and use variables like {name} and {source}. (For example: "Hi {name}, I saw your amazing profile on {source}...")
+
 Add Attachments: If you have a PDF resume, flyer, or image, use the file upload button to attach it.
+
 Launch Campaign: Click Launch. The app will package your attachments, format the HTML, and slowly send personalized emails to every single person in your extracted list!
+
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------> 
+Here is exactly how you add your App Password into our application's dashboard to start sending emails:
+
+Select SMTP: Make sure the Standard SMTP (Free) option is selected at the top of the Bulk Mailer section.
+Find the Senders Box: Look for the large text box labeled "Sender Accounts (Email : App Password)".
+Type the Credentials: You must enter your email and the 16-digit App Password separated by a colon (:). Do not include any spaces in the App Password.
+Exactly like this:
+
+text
+your.email@gmail.com:abcdefghijklmnop
+Want to add more than one account?
+If you generated App Passwords for 3 different Gmail accounts, you can add all of them so the app rotates through them! Just put each one on a new line:
+
+text
+account1@gmail.com:abcdefghijklmnop
+account2@gmail.com:qrstuvwxyzabcdef
+account3@gmail.com:ghijklmnopqrstuv
+Once you've pasted that in, just fill out your email subject, body, and click Launch Campaign!
