@@ -65,7 +65,7 @@ def get_state(session_id: str) -> SearchState:
             "email_details": {},
             "progress": 0,
             "log": [],
-            "stats": {"github": 0, "google": 0, "bing": 0, "devfolio": 0},
+            "stats": {"github": 0, "google": 0, "bing": 0, "devfolio": 0, "gitlab": 0, "npm": 0, "pypi": 0, "devto": 0},
             "search_count": 0
         }
     return sessions_state[session_id]
@@ -252,7 +252,7 @@ async def start_search(req: SearchRequest, background_tasks: BackgroundTasks):
     state["email_details"] = {}
     state["progress"] = 0
     state["log"] = []
-    state["stats"] = {"github": 0, "google": 0, "bing": 0, "devfolio": 0}
+    state["stats"] = {"github": 0, "google": 0, "bing": 0, "devfolio": 0, "gitlab": 0, "npm": 0, "pypi": 0, "devto": 0}
     state["search_count"] = state.get("search_count", 0) + 1  # increment run counter
     background_tasks.add_task(run_search, req)
     return {"status": "started"}
@@ -292,6 +292,14 @@ async def run_search(req: SearchRequest):
             tasks.append(search_bing(session_id, req.keyword))
         if "devfolio" in req.sources:
             tasks.append(search_devfolio(session_id, req.keyword))
+        if "gitlab" in req.sources:
+            tasks.append(search_gitlab(session_id, req.keyword, req.max_results))
+        if "npm" in req.sources:
+            tasks.append(search_npm(session_id, req.keyword))
+        if "pypi" in req.sources:
+            tasks.append(search_pypi(session_id, req.keyword))
+        if "devto" in req.sources:
+            tasks.append(search_devto(session_id, req.keyword))
 
         await asyncio.gather(*tasks)
         log(session_id, f"✅ Search complete! Found {len(state['emails'])} unique emails.")
@@ -571,6 +579,267 @@ async def search_devfolio(session_id: str, keyword: str):
         log(session_id, f"🚀 Devfolio: Found {total} emails total")
     except Exception as e:
         log(session_id, f"❌ Devfolio error: {e}")
+
+
+# ─── GITLAB ───────────────────────────────────────────────────────────────────
+
+async def search_gitlab(session_id: str, keyword: str, max_results: int):
+    state = get_state(session_id)
+    log(session_id, f"🦊 GitLab: Searching for '{keyword}' users...")
+    run_offset = state.get("search_count", 1) - 1
+    page_start = (run_offset * 2) % 8 + 1
+
+    search_terms = [keyword, f"{keyword} student", f"{keyword} developer"]
+    random.shuffle(search_terms)
+    seen_usernames: Set[str] = set()
+
+    for term in search_terms:
+        if not state["running"] or len(state["emails"]) >= max_results:
+            break
+        pages = list(range(page_start, 9)) + list(range(1, page_start))
+        for page in pages:
+            if not state["running"]:
+                break
+            try:
+                url = f"https://gitlab.com/api/v4/users?search={quote(term)}&per_page=20&page={page}"
+                resp = requests.get(url, headers=COMMON_HEADERS, timeout=15)
+                if resp.status_code != 200:
+                    break
+                users = resp.json()
+                if not users:
+                    break
+                log(session_id, f"🦊 GitLab: {len(users)} profiles on page {page}...")
+                for user in users:
+                    if not state["running"]:
+                        break
+                    username = user.get("username", "")
+                    if not username or username in seen_usernames:
+                        continue
+                    seen_usernames.add(username)
+                    # Scrape profile page HTML
+                    try:
+                        pr = requests.get(f"https://gitlab.com/{username}", headers=COMMON_HEADERS, timeout=10)
+                        if pr.status_code == 200:
+                            for e in extract_emails_from_text(pr.text):
+                                if add_email(session_id, e, "gitlab", username, f"gitlab.com/{username}"):
+                                    log(session_id, f"✅ GitLab [{username}]: email found")
+                    except Exception:
+                        pass
+                    # Try profile README
+                    for branch in ["main", "master"]:
+                        try:
+                            raw = f"https://gitlab.com/{username}/{username}/-/raw/{branch}/README.md"
+                            rr = requests.get(raw, timeout=8)
+                            if rr.status_code == 200:
+                                for e in extract_emails_from_text(rr.text):
+                                    add_email(session_id, e, "gitlab", username, f"gitlab.com/{username} README")
+                                break
+                        except Exception:
+                            pass
+                    await asyncio.sleep(0.4)
+                await asyncio.sleep(1.5)
+            except Exception as ex:
+                log(session_id, f"❌ GitLab error: {ex}")
+                break
+
+    log(session_id, f"🦊 GitLab: Done. Total emails so far: {len(state['emails'])}")
+
+
+# ─── NPM ──────────────────────────────────────────────────────────────────────
+
+async def search_npm(session_id: str, keyword: str):
+    state = get_state(session_id)
+    log(session_id, f"📦 npm: Searching packages for '{keyword}'...")
+    run_offset = state.get("search_count", 1) - 1
+    # npm supports `from` for pagination
+    from_offsets = [(run_offset * 50) % 200, 0, 50, 100, 150]
+
+    seen_packages: Set[str] = set()
+    total = 0
+
+    for from_val in from_offsets:
+        if not state["running"]:
+            break
+        try:
+            url = f"https://registry.npmjs.org/-/v1/search?text={quote(keyword)}&size=50&from={from_val}"
+            resp = requests.get(url, headers=COMMON_HEADERS, timeout=15)
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            packages = data.get("objects", [])
+            if not packages:
+                break
+            log(session_id, f"📦 npm: {len(packages)} packages at offset {from_val}...")
+
+            for obj in packages:
+                if not state["running"]:
+                    break
+                pkg = obj.get("package", {})
+                name = pkg.get("name", "")
+                if not name or name in seen_packages:
+                    continue
+                seen_packages.add(name)
+
+                # Extract from maintainers list (has email directly)
+                for m in pkg.get("maintainers", []):
+                    email = m.get("email", "")
+                    if email and add_email(session_id, email, "npm", m.get("username", name), f"npmjs.com/package/{name}"):
+                        total += 1
+
+                # Fetch individual package JSON for author email
+                try:
+                    pkg_resp = requests.get(f"https://registry.npmjs.org/{name}/latest", timeout=10)
+                    if pkg_resp.status_code == 200:
+                        pkg_data = pkg_resp.json()
+                        author = pkg_data.get("author", {})
+                        if isinstance(author, dict):
+                            email = author.get("email", "")
+                            if email:
+                                add_email(session_id, email, "npm", author.get("name", name), f"npmjs.com/package/{name}")
+                        # Also check contributors
+                        for contrib in pkg_data.get("contributors", []):
+                            if isinstance(contrib, dict):
+                                email = contrib.get("email", "")
+                                if email:
+                                    add_email(session_id, email, "npm", contrib.get("name", ""), f"npmjs.com/package/{name}")
+                except Exception:
+                    pass
+
+            await asyncio.sleep(1)
+        except Exception as ex:
+            log(session_id, f"❌ npm error: {ex}")
+
+    log(session_id, f"📦 npm: Done. Found {total} new emails.")
+
+
+# ─── PYPI ─────────────────────────────────────────────────────────────────────
+
+async def search_pypi(session_id: str, keyword: str):
+    state = get_state(session_id)
+    log(session_id, f"🐍 PyPI: Searching packages for '{keyword}'...")
+    run_offset = state.get("search_count", 1) - 1
+    page_start = (run_offset % 5) + 1
+    pages = list(range(page_start, 6)) + list(range(1, page_start))
+
+    seen_packages: Set[str] = set()
+    total = 0
+
+    for page in pages:
+        if not state["running"]:
+            break
+        try:
+            url = f"https://pypi.org/search/?q={quote(keyword)}&page={page}"
+            resp = requests.get(url, headers=COMMON_HEADERS, timeout=15)
+            if resp.status_code != 200:
+                break
+            soup = BeautifulSoup(resp.text, "html.parser")
+            # Package names are in <span class="package-snippet__name">
+            pkg_names = [
+                span.get_text(strip=True)
+                for span in soup.find_all("span", class_="package-snippet__name")
+            ]
+            if not pkg_names:
+                break
+            log(session_id, f"🐍 PyPI: {len(pkg_names)} packages on page {page}...")
+
+            for pkg_name in pkg_names:
+                if not state["running"]:
+                    break
+                if pkg_name in seen_packages:
+                    continue
+                seen_packages.add(pkg_name)
+                try:
+                    pkg_resp = requests.get(f"https://pypi.org/pypi/{pkg_name}/json", timeout=10)
+                    if pkg_resp.status_code == 200:
+                        info = pkg_resp.json().get("info", {})
+                        author_email = info.get("author_email", "") or ""
+                        author_name = info.get("author", "") or pkg_name
+                        # author_email can be comma-separated
+                        for raw_email in author_email.replace(";", ",").split(","):
+                            raw_email = raw_email.strip()
+                            # Handle "Name <email>" format
+                            match = re.search(r'<([^>]+)>', raw_email)
+                            email = match.group(1) if match else raw_email
+                            if email and add_email(session_id, email, "pypi", author_name, f"pypi.org/project/{pkg_name}"):
+                                total += 1
+                except Exception:
+                    pass
+                await asyncio.sleep(0.3)
+
+            await asyncio.sleep(2)
+        except Exception as ex:
+            log(session_id, f"❌ PyPI error: {ex}")
+
+    log(session_id, f"🐍 PyPI: Done. Found {total} new emails.")
+
+
+# ─── DEV.TO ───────────────────────────────────────────────────────────────────
+
+async def search_devto(session_id: str, keyword: str):
+    state = get_state(session_id)
+    log(session_id, f"👩‍💻 DEV.to: Searching articles for '{keyword}'...")
+    run_offset = state.get("search_count", 1) - 1
+    page_start = (run_offset % 5) + 1
+    pages = list(range(page_start, 6)) + list(range(1, page_start))
+
+    seen_users: Set[str] = set()
+    total = 0
+
+    for page in pages:
+        if not state["running"]:
+            break
+        try:
+            tag = quote(keyword.split()[0].lower())  # use first word as tag
+            url = f"https://dev.to/api/articles?tag={tag}&per_page=30&page={page}"
+            resp = requests.get(url, headers={**COMMON_HEADERS, "Accept": "application/json"}, timeout=15)
+            if resp.status_code != 200:
+                break
+            articles = resp.json()
+            if not articles:
+                break
+            log(session_id, f"👩‍💻 DEV.to: {len(articles)} articles on page {page}...")
+
+            for article in articles:
+                if not state["running"]:
+                    break
+                user = article.get("user", {})
+                username = user.get("username", "")
+                if not username or username in seen_users:
+                    continue
+                seen_users.add(username)
+
+                # Scrape user profile page for email
+                try:
+                    profile_resp = requests.get(
+                        f"https://dev.to/{username}",
+                        headers=COMMON_HEADERS, timeout=10
+                    )
+                    if profile_resp.status_code == 200:
+                        for e in extract_emails_from_text(profile_resp.text):
+                            if add_email(session_id, e, "devto", user.get("name", username), f"dev.to/{username}"):
+                                total += 1
+                except Exception:
+                    pass
+
+                # Also scan article body for emails
+                article_url = article.get("url", "")
+                if article_url:
+                    try:
+                        art_resp = requests.get(article_url, headers=COMMON_HEADERS, timeout=10)
+                        if art_resp.status_code == 200:
+                            for e in extract_emails_from_text(art_resp.text):
+                                add_email(session_id, e, "devto", user.get("name", username), article_url)
+                    except Exception:
+                        pass
+
+                await asyncio.sleep(0.5)
+
+            await asyncio.sleep(2)
+        except Exception as ex:
+            log(session_id, f"❌ DEV.to error: {ex}")
+
+    log(session_id, f"👩‍💻 DEV.to: Done. Found {total} new emails.")
+
 
 # ─── CAMPAIGN ─────────────────────────────────────────────────────────────────
 

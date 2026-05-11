@@ -148,6 +148,10 @@
   .source-google{background:rgba(59,130,246,0.15);color:#60a5fa}
   .source-bing{background:rgba(16,185,129,0.15);color:#34d399}
   .source-devfolio{background:rgba(245,158,11,0.15);color:#fbbf24}
+  .source-gitlab{background:rgba(251,146,60,0.15);color:#fb923c}
+  .source-npm{background:rgba(244,63,94,0.15);color:#f43f5e}
+  .source-pypi{background:rgba(250,204,21,0.15);color:#facc15}
+  .source-devto{background:rgba(34,211,238,0.15);color:#22d3ee}
 
   .empty-state{text-align:center;padding:60px 20px;color:var(--muted)}
   .empty-icon{font-size:48px;margin-bottom:12px}
@@ -209,7 +213,7 @@
   </header>
 
   <!-- Stats Bar -->
-  <div class="stats-bar">
+  <div class="stats-bar" style="grid-template-columns:repeat(4,1fr)">
     <div class="stat-card">
       <div class="stat-num" id="totalCount">0</div>
       <div class="stat-label">Total Emails</div>
@@ -225,6 +229,22 @@
     <div class="stat-card">
       <div class="stat-num" id="bingCount" style="color:#34d399">0</div>
       <div class="stat-label">From Bing</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="gitlabCount" style="color:#fb923c">0</div>
+      <div class="stat-label">From GitLab</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="npmCount" style="color:#f43f5e">0</div>
+      <div class="stat-label">From npm</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="pypiCount" style="color:#facc15">0</div>
+      <div class="stat-label">From PyPI</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="devtoCount" style="color:#22d3ee">0</div>
+      <div class="stat-label">From DEV.to</div>
     </div>
   </div>
 
@@ -242,7 +262,7 @@
         <input type="number" id="maxResults" value="500" min="10" max="5000"/>
 
         <label>Sources to Search</label>
-        <div class="sources">
+        <div class="sources" style="grid-template-columns:1fr 1fr">
           <div class="source-toggle">
             <input type="checkbox" id="srcGithub" checked/>
             <label for="srcGithub"><span class="source-icon">🐙</span>GitHub</label>
@@ -258,6 +278,22 @@
           <div class="source-toggle">
             <input type="checkbox" id="srcDevfolio"/>
             <label for="srcDevfolio"><span class="source-icon">🚀</span>Devfolio</label>
+          </div>
+          <div class="source-toggle">
+            <input type="checkbox" id="srcGitlab" checked/>
+            <label for="srcGitlab"><span class="source-icon">🦊</span>GitLab</label>
+          </div>
+          <div class="source-toggle">
+            <input type="checkbox" id="srcNpm" checked/>
+            <label for="srcNpm"><span class="source-icon">📦</span>npm</label>
+          </div>
+          <div class="source-toggle">
+            <input type="checkbox" id="srcPypi" checked/>
+            <label for="srcPypi"><span class="source-icon">🐍</span>PyPI</label>
+          </div>
+          <div class="source-toggle">
+            <input type="checkbox" id="srcDevto" checked/>
+            <label for="srcDevto"><span class="source-icon">👩‍💻</span>DEV.to</label>
           </div>
         </div>
 
@@ -432,6 +468,10 @@ async function startSearch() {
   if (document.getElementById('srcGoogle').checked) sources.push('google');
   if (document.getElementById('srcBing').checked) sources.push('bing');
   if (document.getElementById('srcDevfolio').checked) sources.push('devfolio');
+  if (document.getElementById('srcGitlab').checked) sources.push('gitlab');
+  if (document.getElementById('srcNpm').checked) sources.push('npm');
+  if (document.getElementById('srcPypi').checked) sources.push('pypi');
+  if (document.getElementById('srcDevto').checked) sources.push('devto');
   if (!sources.length) { alert('Select at least one source!'); return; }
 
   const maxResults = parseInt(document.getElementById('maxResults').value) || 500;
@@ -456,6 +496,10 @@ async function startSearch() {
       document.getElementById('githubCount').textContent = '0';
       document.getElementById('googleCount').textContent = '0';
       document.getElementById('bingCount').textContent = '0';
+      document.getElementById('gitlabCount').textContent = '0';
+      document.getElementById('npmCount').textContent = '0';
+      document.getElementById('pypiCount').textContent = '0';
+      document.getElementById('devtoCount').textContent = '0';
       document.getElementById('foundCount').textContent = '0';
       document.getElementById('progressFill').style.width = '0%';
       document.getElementById('progressPct').textContent = '0%';
@@ -493,6 +537,10 @@ async function pollStatus() {
     document.getElementById('githubCount').textContent = data.stats.github || 0;
     document.getElementById('googleCount').textContent = data.stats.google || 0;
     document.getElementById('bingCount').textContent = data.stats.bing || 0;
+    document.getElementById('gitlabCount').textContent = data.stats.gitlab || 0;
+    document.getElementById('npmCount').textContent = data.stats.npm || 0;
+    document.getElementById('pypiCount').textContent = data.stats.pypi || 0;
+    document.getElementById('devtoCount').textContent = data.stats.devto || 0;
     document.getElementById('foundCount').textContent = data.count;
 
     // Progress
