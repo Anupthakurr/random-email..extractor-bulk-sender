@@ -2,7 +2,8 @@ import sys
 import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Form, File, UploadFile
+import json
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -14,6 +15,12 @@ import uvicorn
 from typing import List, Set, Dict, TypedDict
 from urllib.parse import urlparse, urljoin, quote
 from bs4 import BeautifulSoup, Tag
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
+import random
 
 app = FastAPI(title="Student Email Extractor")
 
@@ -58,6 +65,35 @@ def get_state(session_id: str) -> SearchState:
         }
     return sessions_state[session_id]
 
+class CampaignState(TypedDict):
+    running: bool
+    sent: int
+    failed: int
+    total: int
+    progress: int
+    log: List[str]
+
+campaigns_state: Dict[str, CampaignState] = {}
+
+def get_campaign_state(session_id: str) -> CampaignState:
+    if session_id not in campaigns_state:
+        campaigns_state[session_id] = {
+            "running": False,
+            "sent": 0,
+            "failed": 0,
+            "total": 0,
+            "progress": 0,
+            "log": []
+        }
+    return campaigns_state[session_id]
+
+def log_campaign(session_id: str, msg: str):
+    state = get_campaign_state(session_id)
+    state["log"].append(msg)
+    if len(state["log"]) > 200:
+        state["log"] = state["log"][-200:]
+    print(f"[Campaign {session_id}] {msg}")
+
 COMMON_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -71,6 +107,19 @@ class SearchRequest(BaseModel):
     sources: List[str]
     max_results: int = 500
 
+class SMTPSender(BaseModel):
+    email: str
+    password: str
+
+class CampaignRequest(BaseModel):
+    session_id: str
+    smtp_server: str
+    smtp_port: int
+    senders: List[SMTPSender]
+    subject: str
+    body: str
+    min_delay: int
+    max_delay: int
 
 def is_valid_email(email: str) -> bool:
     email = email.lower()
@@ -476,6 +525,158 @@ async def search_devfolio(session_id: str, keyword: str):
         log(session_id, f"🚀 Devfolio: Found {total} emails total")
     except Exception as e:
         log(session_id, f"❌ Devfolio error: {e}")
+
+# ─── CAMPAIGN ─────────────────────────────────────────────────────────────────
+
+def send_email_sync(smtp_server: str, smtp_port: int, sender_email: str, sender_password: str, to_email: str, subject: str, body_html: str, attachments: list):
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = to_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body_html, 'html'))
+    
+    for attachment in attachments:
+        part = MIMEBase('application', 'octet-stream')
+        part.set_payload(attachment['content'])
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', f'attachment; filename="{attachment["filename"]}"')
+        msg.attach(part)
+    
+    with smtplib.SMTP(smtp_server, smtp_port) as server:
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+
+@app.post("/api/campaign/start")
+async def start_campaign(
+    background_tasks: BackgroundTasks,
+    session_id: str = Form(...),
+    smtp_server: str = Form(...),
+    smtp_port: int = Form(...),
+    senders_raw: str = Form(...),
+    subject: str = Form(...),
+    body: str = Form(...),
+    min_delay: int = Form(...),
+    max_delay: int = Form(...),
+    files: List[UploadFile] = File(default=[])
+):
+    state = get_campaign_state(session_id)
+    if state["running"]:
+        raise HTTPException(400, "Campaign already running. Stop it first.")
+    
+    search_state = get_state(session_id)
+    target_emails = list(search_state["email_details"].values())
+    
+    if not target_emails:
+        raise HTTPException(400, "No extracted emails to send to. Please search first.")
+        
+    try:
+        senders = json.loads(senders_raw)
+        if not senders:
+            raise ValueError()
+    except Exception:
+        raise HTTPException(400, "Please provide at least one sender account in valid JSON format.")
+
+    state["running"] = True
+    state["sent"] = 0
+    state["failed"] = 0
+    state["total"] = len(target_emails)
+    state["progress"] = 0
+    state["log"] = []
+    
+    # Read files into memory so we can attach them later without file stream issues
+    attachments = []
+    for file in files:
+        if file.filename:
+            content = await file.read()
+            attachments.append({
+                "filename": file.filename,
+                "content": content
+            })
+            
+    # We construct a CampaignRequest-like object internally
+    req_dict = {
+        "session_id": session_id,
+        "smtp_server": smtp_server,
+        "smtp_port": smtp_port,
+        "senders": [SMTPSender(**s) for s in senders],
+        "subject": subject,
+        "body": body,
+        "min_delay": min_delay,
+        "max_delay": max_delay
+    }
+    
+    req_obj = CampaignRequest(**req_dict)
+    
+    background_tasks.add_task(run_campaign, req_obj, target_emails, attachments)
+    return {"status": "started"}
+
+@app.get("/api/campaign/status")
+async def get_campaign_status(session_id: str):
+    return get_campaign_state(session_id)
+
+@app.post("/api/campaign/stop")
+async def stop_campaign(session_id: str):
+    state = get_campaign_state(session_id)
+    state["running"] = False
+    log_campaign(session_id, "🛑 Campaign stopped by user.")
+    return {"status": "stopped"}
+
+async def run_campaign(req: CampaignRequest, targets: list, attachments: list):
+    session_id = req.session_id
+    state = get_campaign_state(session_id)
+    
+    log_campaign(session_id, f"🚀 Campaign started for {len(targets)} targets.")
+    log_campaign(session_id, f"🕒 Using delay between {req.min_delay}s and {req.max_delay}s.")
+    
+    sender_idx = 0
+    
+    for i, target in enumerate(targets):
+        if not state["running"]:
+            break
+            
+        target_email = target["email"]
+        target_name = target.get("name", "") or "Student"
+        target_source = target.get("source", "")
+        
+        # Round robin sender
+        sender = req.senders[sender_idx % len(req.senders)]
+        sender_idx += 1
+        
+        # Replace variables in body/subject
+        subject = req.subject.replace("{email}", target_email).replace("{name}", target_name).replace("{source}", target_source)
+        body = req.body.replace("{email}", target_email).replace("{name}", target_name).replace("{source}", target_source)
+        
+        # Send email via thread to avoid blocking event loop
+        log_campaign(session_id, f"📧 Sending to {target_email} via {sender.email}...")
+        try:
+            await asyncio.to_thread(
+                send_email_sync,
+                req.smtp_server, req.smtp_port,
+                sender.email, sender.password,
+                target_email, subject, body,
+                attachments
+            )
+            state["sent"] += 1
+            log_campaign(session_id, f"✅ Sent to {target_email}")
+        except Exception as e:
+            state["failed"] += 1
+            log_campaign(session_id, f"❌ Failed to {target_email}: {str(e)}")
+            
+        state["progress"] = int(((i + 1) / len(targets)) * 100)
+        
+        # Delay (if not last item)
+        if i < len(targets) - 1 and state["running"]:
+            delay = random.randint(req.min_delay, req.max_delay)
+            log_campaign(session_id, f"⏳ Waiting {delay} seconds before next email...")
+            await asyncio.sleep(delay)
+            
+    state["running"] = False
+    if state["progress"] < 100:
+        log_campaign(session_id, "🛑 Campaign halted.")
+    else:
+        state["progress"] = 100
+        log_campaign(session_id, "✅ Campaign finished!")
 
 
 # Serve static files (frontend)
