@@ -310,7 +310,15 @@ async function startSearch() {
       appendLog('🚀 Search started!', 'info');
       polling = setInterval(pollStatus, 2000);
     } else {
-      alert(data.detail || 'Error starting search');
+      let errorMsg = data.detail || 'Error starting search';
+      if (typeof errorMsg === 'object') {
+        if (Array.isArray(errorMsg)) {
+          errorMsg = errorMsg.map(err => err.msg || JSON.stringify(err)).join('\n');
+        } else {
+          errorMsg = JSON.stringify(errorMsg, null, 2);
+        }
+      }
+      alert(errorMsg);
     }
   } catch(e) {
     alert('Cannot connect to server. Make sure server.py is running!');
