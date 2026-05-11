@@ -308,10 +308,11 @@ async def scrape_github_user(login: str, headers: dict) -> int:
             soup = BeautifulSoup(r.text, "html.parser")
             # Extract website link if present
             for a in soup.find_all("a", rel="nofollow me"):
-                href = a.get("href")
-                if isinstance(href, str) and href.startswith("http"):
-                    n = scrape_page_for_emails(href, "github", login, f"github.com/{login} blog")
-                    count += n
+                if isinstance(a, Tag):
+                    href = a.get("href")
+                    if isinstance(href, str) and href.startswith("http"):
+                        n = scrape_page_for_emails(href, "github", login, f"github.com/{login} blog")
+                        count += n
 
             # 3. Top repos from pinned items in HTML
             pinned = soup.find_all("span", class_="repo")
@@ -465,6 +466,7 @@ app.mount("/", StaticFiles(directory=".", html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    print("\n[*] Student Email Extractor starting...")
-    print("[*] Open your browser at: http://localhost:8001\n")
-    uvicorn.run(app, host="0.0.0.0", port=8001, reload=False)
+    port = int(os.environ.get("PORT", 8001))
+    print(f"\n[*] Student Email Extractor starting...")
+    print(f"[*] Open your browser at: http://localhost:{port}\n")
+    uvicorn.run(app, host="0.0.0.0", port=port, reload=False)
