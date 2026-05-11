@@ -10,6 +10,8 @@ import requests
 import re
 import asyncio
 from typing import List
+from urllib.parse import urlparse, urljoin
+from bs4 import BeautifulSoup
 
 app = FastAPI(title="Student Email Extractor")
 
@@ -26,7 +28,10 @@ BLOCKED_DOMAINS = [
     "example.com", "test.com", "dummy.com", "placeholder.com",
     "sentry.io", "github.com", "githubusercontent.com", "noreply",
     "wixpress.com", "jquery.com", "npmjs.com", "webpack.js",
-    "babel.io", "eslint.org", "schema.org"
+    "babel.io", "eslint.org", "schema.org", "w3.org", "mozilla.org",
+    "apache.org", "google.com", "microsoft.com", "amazon.com",
+    "cloudflare.com", "fastly.net", "jsdelivr.net", "unpkg.com",
+    "cdnjs.com", "bootstrapcdn.com", "fontawesome.com",
 ]
 
 search_state = {
@@ -36,6 +41,12 @@ search_state = {
     "progress": 0,
     "log": [],
     "stats": {"github": 0, "google": 0, "bing": 0, "devfolio": 0}
+}
+
+COMMON_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 
 
@@ -49,17 +60,19 @@ def is_valid_email(email: str) -> bool:
     email = email.lower()
     if any(b in email for b in BLOCKED_DOMAINS):
         return False
-    if email.endswith(".png") or email.endswith(".jpg") or email.endswith(".svg"):
+    if email.endswith((".png", ".jpg", ".svg", ".gif", ".css", ".js")):
         return False
-    if "your-email" in email or "example" in email:
+    if any(x in email for x in ["your-email", "example", "user@", "admin@host", "test@"]):
         return False
     parts = email.split("@")
-    if len(parts) != 2 or len(parts[0]) < 2:
+    if len(parts) != 2 or len(parts[0]) < 2 or len(parts[1]) < 4:
+        return False
+    if "." not in parts[1]:
         return False
     return True
 
 
-def add_email(email: str, source: str, name: str = "", platform: str = ""):
+def add_email(email: str, source: str, name: str = "", platform: str = "") -> bool:
     email = email.lower().strip()
     if is_valid_email(email) and email not in search_state["emails"]:
         search_state["emails"].add(email)
@@ -70,13 +83,64 @@ def add_email(email: str, source: str, name: str = "", platform: str = ""):
             "platform": platform
         }
         search_state["stats"][source] = search_state["stats"].get(source, 0) + 1
+        return True
+    return False
 
 
 def log(msg: str):
     search_state["log"].append(msg)
-    if len(search_state["log"]) > 100:
-        search_state["log"] = search_state["log"][-100:]
+    if len(search_state["log"]) > 200:
+        search_state["log"] = search_state["log"][-200:]
     print(msg)
+
+
+def extract_emails_from_text(text: str) -> List[str]:
+    """Extract emails, also handle obfuscated ones like name [at] domain [dot] com"""
+    # Standard emails
+    found = set(EMAIL_REGEX.findall(text))
+    # Obfuscated: name [at] domain [dot] com
+    obfuscated = re.findall(
+        r'([A-Za-z0-9._%+\-]+)\s*[\[\(]?\s*at\s*[\]\)]?\s*([A-Za-z0-9.\-]+)\s*[\[\(]?\s*dot\s*[\]\)]?\s*([A-Za-z]{2,})',
+        text, re.IGNORECASE
+    )
+    for parts in obfuscated:
+        email = f"{parts[0]}@{parts[1]}.{parts[2]}"
+        found.add(email)
+    return list(found)
+
+
+def scrape_page_for_emails(url: str, source_name: str, name: str = "", platform: str = "") -> int:
+    """Fetch a URL and extract all emails from it. Returns count of new emails added."""
+    count = 0
+    try:
+        resp = requests.get(url, headers=COMMON_HEADERS, timeout=12, allow_redirects=True)
+        if resp.status_code == 200:
+            text = resp.text
+            emails = extract_emails_from_text(text)
+            for e in emails:
+                if add_email(e, source_name, name, platform):
+                    count += 1
+    except Exception:
+        pass
+    return count
+
+
+def extract_links_from_serp(html: str, base_domain_blacklist: list) -> List[str]:
+    """Parse search result HTML and extract result page URLs to scrape."""
+    soup = BeautifulSoup(html, "html.parser")
+    urls = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        # Google/Bing wrap URLs in redirect params
+        if href.startswith("/url?q="):
+            href = href[7:].split("&")[0]
+        if href.startswith("http") and not href.startswith("https://www.google") \
+                and not href.startswith("https://www.bing"):
+            parsed = urlparse(href)
+            domain = parsed.netloc.lower()
+            if not any(bl in domain for bl in base_domain_blacklist):
+                urls.append(href)
+    return list(dict.fromkeys(urls))  # deduplicate while preserving order
 
 
 @app.post("/api/search/start")
@@ -133,6 +197,8 @@ async def run_search(req: SearchRequest):
         search_state["progress"] = 100
 
 
+# ─── GITHUB ───────────────────────────────────────────────────────────────────
+
 async def search_github(keyword: str, max_results: int):
     log(f"🐙 GitHub: Searching for '{keyword}' students...")
     headers = {
@@ -140,7 +206,13 @@ async def search_github(keyword: str, max_results: int):
         "User-Agent": "EmailExtractorTool/1.0"
     }
 
-    student_keywords = [keyword, f"{keyword} student", f"{keyword} college", f"{keyword} university"]
+    student_keywords = [
+        keyword,
+        f"{keyword} student",
+        f"{keyword} developer",
+    ]
+
+    seen_logins = set()
 
     for kw in student_keywords:
         if not search_state["running"] or len(search_state["emails"]) >= max_results:
@@ -171,27 +243,16 @@ async def search_github(keyword: str, max_results: int):
                 for user in users:
                     if not search_state["running"]:
                         break
+                    login = user["login"]
+                    if login in seen_logins:
+                        continue
+                    seen_logins.add(login)
+
                     try:
-                        profile_url = f"https://api.github.com/users/{user['login']}"
-                        profile_resp = requests.get(profile_url, headers=headers, timeout=10)
-
-                        if profile_resp.status_code == 200:
-                            profile = profile_resp.json()
-                            email = profile.get("email")
-                            name = profile.get("name") or user["login"]
-                            bio = profile.get("bio") or ""
-
-                            if email:
-                                add_email(email, "github", name, f"github.com/{user['login']}")
-                                log(f"✅ GitHub: {email} ({name})")
-
-                            # Extract from bio
-                            bio_emails = EMAIL_REGEX.findall(bio)
-                            for e in bio_emails:
-                                add_email(e, "github", name, f"github.com/{user['login']}")
-                                log(f"✅ GitHub Bio: {e}")
-
-                        await asyncio.sleep(0.8)
+                        found = await scrape_github_user(login, headers)
+                        if found:
+                            log(f"✅ GitHub [{login}]: {found} email(s) found")
+                        await asyncio.sleep(0.5)
                     except Exception:
                         pass
 
@@ -202,36 +263,119 @@ async def search_github(keyword: str, max_results: int):
                 break
 
 
+async def scrape_github_user(login: str, headers: dict) -> int:
+    """Fetch profile + README + repos for a GitHub user and extract emails."""
+    count = 0
+    base = "https://api.github.com"
+
+    # 1. Profile email
+    try:
+        r = requests.get(f"{base}/users/{login}", headers=headers, timeout=10)
+        if r.status_code == 200:
+            profile = r.json()
+            email = profile.get("email")
+            name = profile.get("name") or login
+            bio = profile.get("bio") or ""
+            blog = profile.get("blog") or ""
+
+            if email:
+                if add_email(email, "github", name, f"github.com/{login}"):
+                    count += 1
+
+            # Bio emails
+            for e in extract_emails_from_text(bio):
+                if add_email(e, "github", name, f"github.com/{login}"):
+                    count += 1
+
+            # Blog / personal website
+            if blog and blog.startswith("http"):
+                n = scrape_page_for_emails(blog, "github", name, f"github.com/{login} blog")
+                count += n
+    except Exception:
+        pass
+
+    # 2. Profile README (username/username repo)
+    try:
+        readme_url = f"https://raw.githubusercontent.com/{login}/{login}/main/README.md"
+        r = requests.get(readme_url, timeout=8)
+        if r.status_code == 200:
+            for e in extract_emails_from_text(r.text):
+                if add_email(e, "github", login, f"github.com/{login} README"):
+                    count += 1
+        else:
+            # Try master branch
+            readme_url2 = f"https://raw.githubusercontent.com/{login}/{login}/master/README.md"
+            r2 = requests.get(readme_url2, timeout=8)
+            if r2.status_code == 200:
+                for e in extract_emails_from_text(r2.text):
+                    if add_email(e, "github", login, f"github.com/{login} README"):
+                        count += 1
+    except Exception:
+        pass
+
+    # 3. Top repos README
+    try:
+        repos_r = requests.get(f"{base}/users/{login}/repos?sort=stars&per_page=5", headers=headers, timeout=10)
+        if repos_r.status_code == 200:
+            repos = repos_r.json()
+            for repo in repos[:3]:
+                repo_name = repo.get("name", "")
+                for branch in ["main", "master"]:
+                    try:
+                        raw = f"https://raw.githubusercontent.com/{login}/{repo_name}/{branch}/README.md"
+                        rr = requests.get(raw, timeout=8)
+                        if rr.status_code == 200:
+                            for e in extract_emails_from_text(rr.text):
+                                if add_email(e, "github", login, f"github.com/{login}/{repo_name}"):
+                                    count += 1
+                            break
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    return count
+
+
+# ─── GOOGLE ───────────────────────────────────────────────────────────────────
+
 async def search_google(keyword: str):
     log(f"🔎 Google: Dorking for '{keyword}' student emails...")
     queries = [
-        f'{keyword} student email "@gmail.com" site:github.com',
-        f'{keyword} "computer science" student email contact',
-        f'{keyword} student "@college.edu" email',
-        f'"{keyword}" student email site:devfolio.co',
-        f'"{keyword}" engineering student email contact site:linkedin.com',
+        f'"{keyword}" student email contact site:github.io',
+        f'"{keyword}" student "gmail.com" email portfolio',
+        f'{keyword} student developer email resume site:github.io OR site:netlify.app',
+        f'{keyword} "contact me" student email developer',
+        f'{keyword} college student open source email',
     ]
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://www.google.com/"
-    }
+    scraped_urls = set()
+    serp_blacklist = ["google.com", "youtube.com", "facebook.com", "twitter.com", "instagram.com"]
 
     for query in queries:
         if not search_state["running"]:
             break
         try:
-            url = f"https://www.google.com/search?q={requests.utils.quote(query)}&num=50"
-            resp = requests.get(url, headers=headers, timeout=20)
-            emails = EMAIL_REGEX.findall(resp.text)
-            new_count = 0
-            for e in emails:
-                if add_email(e, "google", "", "Google Search") is None:
-                    new_count += 1
-            if emails:
-                log(f"🔎 Google: Found {len(emails)} emails from query")
+            url = f"https://www.google.com/search?q={requests.utils.quote(query)}&num=30"
+            resp = requests.get(url, headers=COMMON_HEADERS, timeout=20)
+
+            # Extract emails directly from SERP (unlikely but try)
+            for e in extract_emails_from_text(resp.text):
+                add_email(e, "google", "", "Google SERP")
+
+            # Extract result URLs and scrape each
+            result_urls = extract_links_from_serp(resp.text, serp_blacklist)
+            log(f"🔎 Google: Found {len(result_urls)} pages to scrape for query...")
+
+            for page_url in result_urls[:8]:  # scrape top 8 results per query
+                if page_url in scraped_urls or not search_state["running"]:
+                    continue
+                scraped_urls.add(page_url)
+                n = scrape_page_for_emails(page_url, "google", "", page_url)
+                if n > 0:
+                    log(f"✅ Google scraped: {n} email(s) from {page_url[:60]}")
+                await asyncio.sleep(1)
+
             await asyncio.sleep(5)
         except Exception as e:
             log(f"❌ Google error: {e}")
@@ -239,30 +383,42 @@ async def search_google(keyword: str):
     log("🔎 Google dorking complete.")
 
 
+# ─── BING ─────────────────────────────────────────────────────────────────────
+
 async def search_bing(keyword: str):
     log(f"🅱️ Bing: Searching for '{keyword}' student emails...")
     queries = [
-        f'{keyword} student email "@gmail.com"',
-        f'{keyword} college student contact email',
-        f'"{keyword}" student "@edu" email',
+        f'"{keyword}" student email github.io portfolio',
+        f'{keyword} college student developer email contact',
+        f'{keyword} "contact" student email resume site:github.io',
     ]
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html"
-    }
+    scraped_urls = set()
+    serp_blacklist = ["bing.com", "microsoft.com", "youtube.com", "facebook.com"]
 
     for query in queries:
         if not search_state["running"]:
             break
         try:
-            url = f"https://www.bing.com/search?q={requests.utils.quote(query)}&count=50"
-            resp = requests.get(url, headers=headers, timeout=20)
-            emails = EMAIL_REGEX.findall(resp.text)
-            for e in emails:
-                add_email(e, "bing", "", "Bing Search")
-            if emails:
-                log(f"🅱️ Bing: Found {len(emails)} emails from query")
+            url = f"https://www.bing.com/search?q={requests.utils.quote(query)}&count=30"
+            resp = requests.get(url, headers=COMMON_HEADERS, timeout=20)
+
+            # Direct SERP emails
+            for e in extract_emails_from_text(resp.text):
+                add_email(e, "bing", "", "Bing SERP")
+
+            result_urls = extract_links_from_serp(resp.text, serp_blacklist)
+            log(f"🅱️ Bing: Found {len(result_urls)} pages to scrape...")
+
+            for page_url in result_urls[:8]:
+                if page_url in scraped_urls or not search_state["running"]:
+                    continue
+                scraped_urls.add(page_url)
+                n = scrape_page_for_emails(page_url, "bing", "", page_url)
+                if n > 0:
+                    log(f"✅ Bing scraped: {n} email(s) from {page_url[:60]}")
+                await asyncio.sleep(1)
+
             await asyncio.sleep(3)
         except Exception as e:
             log(f"❌ Bing error: {e}")
@@ -270,29 +426,38 @@ async def search_bing(keyword: str):
     log("🅱️ Bing search complete.")
 
 
+# ─── DEVFOLIO ─────────────────────────────────────────────────────────────────
+
 async def search_devfolio(keyword: str):
     log(f"🚀 Devfolio: Searching hackathon participants...")
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json"
-    }
     try:
-        # Search hackathons
-        url = "https://api.devfolio.co/api/hackathons?status=open&per_page=20"
-        resp = requests.get(url, headers=headers, timeout=15)
-        emails = EMAIL_REGEX.findall(resp.text)
-        for e in emails:
-            add_email(e, "devfolio", "", "Devfolio")
-        log(f"🚀 Devfolio: Extracted {len(emails)} emails from hackathon listings")
+        pages_to_scrape = [
+            f"https://devfolio.co/search?q={requests.utils.quote(keyword)}",
+            "https://devfolio.co/hackathons",
+        ]
 
-        # Try public project pages
-        url2 = f"https://devfolio.co/search?q={requests.utils.quote(keyword)}"
-        resp2 = requests.get(url2, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-        emails2 = EMAIL_REGEX.findall(resp2.text)
-        for e in emails2:
-            add_email(e, "devfolio", "", "Devfolio Projects")
-        log(f"🚀 Devfolio projects: Found {len(emails2)} additional emails")
+        try:
+            api_resp = requests.get(
+                "https://api.devfolio.co/api/hackathons?status=open&per_page=10",
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+                timeout=15
+            )
+            if api_resp.status_code == 200:
+                hackathons = api_resp.json().get("results", [])
+                for h in hackathons[:5]:
+                    slug = h.get("slug", "")
+                    if slug:
+                        pages_to_scrape.append(f"https://devfolio.co/{slug}")
+        except Exception:
+            pass
 
+        total = 0
+        for url in pages_to_scrape:
+            n = scrape_page_for_emails(url, "devfolio", "", "Devfolio")
+            total += n
+            await asyncio.sleep(2)
+
+        log(f"🚀 Devfolio: Found {total} emails total")
     except Exception as e:
         log(f"❌ Devfolio error: {e}")
 
