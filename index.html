@@ -163,6 +163,17 @@
   @media(max-width:768px){
     .grid{grid-template-columns:1fr}
     .stats-bar{grid-template-columns:repeat(2,1fr)}
+
+    /* Bulk mailer responsive */
+    .mailer-method-toggle{flex-direction:column!important;gap:10px!important}
+    .mailer-campaign-grid{grid-template-columns:1fr!important;gap:16px!important}
+    .smtp-server-row{flex-direction:column!important;gap:8px!important}
+    .smtp-server-row input[type=number]{width:100%!important}
+    .delay-row{flex-wrap:wrap!important;gap:8px!important}
+    .delay-row input[type=number]{width:calc(50% - 26px)!important;min-width:70px}
+    .results-header{flex-direction:column!important;align-items:flex-start!important;gap:10px!important}
+    .results-header .btn-group{width:100%;display:flex;gap:8px}
+    .results-header .btn-group button{flex:1}
   }
   
   /* Quill customizations for dark mode */
@@ -328,7 +339,7 @@
           <div class="card-title" style="margin-bottom:4px">📧 Extracted Emails</div>
           <div class="results-count">Found <span id="foundCount">0</span> unique emails</div>
         </div>
-        <div style="display:flex;gap:10px">
+        <div class="btn-group" style="display:flex;gap:10px">
           <button class="btn btn-export" onclick="copyAll()">📋 Copy All</button>
           <button class="btn btn-export" onclick="exportCSV()">⬇️ Export CSV</button>
         </div>
@@ -365,7 +376,7 @@
   <div class="card" style="margin-top:24px" id="mailerSection">
     <div class="card-title">📨 Bulk Email Campaign</div>
     
-    <div style="margin-bottom:16px;display:flex;gap:16px;background:#0a0f1e;padding:12px;border-radius:10px;border:1px solid var(--border)">
+    <div class="mailer-method-toggle" style="margin-bottom:16px;display:flex;gap:16px;background:#0a0f1e;padding:12px;border-radius:10px;border:1px solid var(--border)">
       <label style="margin:0;display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-weight:500">
         <input type="radio" name="sendMethod" value="smtp" checked onchange="toggleSendMethod()" /> 
         Standard SMTP (Free)
@@ -376,13 +387,13 @@
       </label>
     </div>
 
-    <div class="grid" style="grid-template-columns:1fr 1fr;gap:24px">
+    <div class="mailer-campaign-grid grid" style="grid-template-columns:1fr 1fr;gap:24px">
       <div>
         <div id="smtpInputs">
           <label>SMTP Server & Port</label>
-          <div style="display:flex;gap:10px">
+          <div class="smtp-server-row" style="display:flex;gap:10px">
             <input type="text" id="smtpServer" value="smtp.gmail.com" placeholder="smtp.gmail.com" />
-            <input type="number" id="smtpPort" value="587" style="width:100px" />
+            <input type="number" id="smtpPort" value="587" style="width:100px;flex-shrink:0" />
           </div>
           
           <label style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
@@ -410,10 +421,10 @@
         <div style="font-size:11px;color:var(--muted);margin-top:4px">Add specific emails here (one per line). These will receive the campaign even if you didn't extract them.</div>
 
         <label style="margin-top:20px;display:block">Delay Between Emails (Seconds)</label>
-        <div style="display:flex;gap:10px;align-items:center">
-          <input type="number" id="minDelay" value="30" style="width:100px" />
-          <span style="color:var(--muted)">to</span>
-          <input type="number" id="maxDelay" value="60" style="width:100px" />
+        <div class="delay-row" style="display:flex;gap:10px;align-items:center">
+          <input type="number" id="minDelay" value="30" style="width:100px;flex-shrink:0" />
+          <span style="color:var(--muted);white-space:nowrap">to</span>
+          <input type="number" id="maxDelay" value="60" style="width:100px;flex-shrink:0" />
         </div>
       </div>
 
